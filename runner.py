@@ -58,7 +58,7 @@ else:
     console = None
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # Rich formatting functions
@@ -98,21 +98,43 @@ def print_model_input(messages: List[Any], tools: List[str]) -> None:
         print(f"LLM Input: {len(messages)} messages, {len(tools)} tools")
         return
     
-    # Create a summary of the input
-    content = f"[bold cyan]Messages:[/] {len(messages)} messages\n"
-    content += f"[bold yellow]Tools:[/] {', '.join(tools)}\n"
+    # Get the actual conversation content
+    content_lines = []
+    content_lines.append(f"[bold yellow]Available Tools:[/] {', '.join(tools)}")
+    content_lines.append("")
     
-    # Show the last user/system message (full content)
-    for msg in reversed(messages):
-        if hasattr(msg, 'role') and msg.role in ['user', 'system']:
-            content += f"[bold green]Last {msg.role}:[/] {msg.content}"
-            break
+    # Show all messages in the conversation
+    for i, msg in enumerate(messages):
+        if hasattr(msg, 'role'):
+            role_color = {
+                'system': 'dim white',
+                'user': 'cyan', 
+                'assistant': 'bright_magenta',
+                'tool': 'green'
+            }.get(msg.role, 'white')
+            
+            content_lines.append(f"[bold {role_color}]Message {i+1} ({msg.role}):[/]")
+            # Truncate very long messages but show enough context
+            msg_content = msg.content if hasattr(msg, 'content') else str(msg)
+            if len(msg_content) > 500:
+                msg_content = msg_content[:500] + "... [truncated]"
+            content_lines.append(msg_content)
+            
+            # Show tool calls if present
+            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                content_lines.append(f"[dim yellow]  Tool calls: {len(msg.tool_calls)}[/]")
+                for tc in msg.tool_calls:
+                    args_preview = str(tc.arguments)[:100] + ("..." if len(str(tc.arguments)) > 100 else "")
+                    content_lines.append(f"[dim]    {tc.function}({args_preview})[/]")
+            
+            content_lines.append("")
     
     console.print(Panel(
-        content,
-        title="🤖 → LLM Input",
-        border_style="cyan",
-        box=box.ROUNDED
+        "\n".join(content_lines),
+        title="🔵 EXACT MODEL CONTEXT",
+        border_style="bright_blue",
+        box=box.DOUBLE,
+        width=120
     ))
 
 def print_model_output(response_content: str, tool_calls: List[Any]) -> None:
@@ -121,21 +143,71 @@ def print_model_output(response_content: str, tool_calls: List[Any]) -> None:
         print(f"LLM Output: {response_content}, {len(tool_calls)} tool calls")
         return
     
-    content = ""
-    if response_content:
-        content += f"[bold bright_magenta]Response:[/]\n{response_content}\n\n"
+    content_lines = []
+    
+    if response_content and response_content.strip():
+        content_lines.append("[bold bright_magenta]MODEL REASONING:[/]")
+        content_lines.append(response_content.strip())
+        content_lines.append("")
     
     if tool_calls:
-        content += f"[bold yellow]Tool Calls ({len(tool_calls)}):[/]\n"
+        content_lines.append(f"[bold yellow]TOOL CALLS REQUESTED ({len(tool_calls)}):[/]")
         for i, tc in enumerate(tool_calls, 1):
-            # Show full arguments without truncation
-            content += f"  {i}. [cyan]{tc.function}[/]({tc.arguments})\n"
+            # Show full arguments
+            args_str = json.dumps(tc.arguments, indent=2) if hasattr(tc, 'arguments') else str(tc.arguments)
+            content_lines.append(f"[cyan]{i}. {tc.function}[/]")
+            content_lines.append(f"[dim]{args_str}[/]")
+            if i < len(tool_calls):
+                content_lines.append("")
+    
+    if not content_lines:
+        content_lines = ["[dim]No response content or tool calls[/]"]
     
     console.print(Panel(
-        content.rstrip(),
-        title="🤖 ← LLM Output", 
+        "\n".join(content_lines),
+        title="🟣 EXACT MODEL RESPONSE", 
         border_style="bright_magenta",
-        box=box.ROUNDED
+        box=box.DOUBLE,
+        width=120
+    ))
+
+def print_container_action(action_type: str, details: str, result: str = "", success: bool = True) -> None:
+    """Print what's happening inside the container."""
+    if not RICH_AVAILABLE:
+        print(f"Container: {action_type} - {details}")
+        if result:
+            print(f"Result: {result}")
+        return
+    
+    content_lines = []
+    
+    # Action header
+    action_color = "green" if success else "red"
+    status_symbol = "✅" if success else "❌"
+    content_lines.append(f"[bold {action_color}]{status_symbol} ACTION:[/] {action_type}")
+    content_lines.append(f"[bold cyan]DETAILS:[/] {details}")
+    
+    if result and result.strip():
+        content_lines.append("")
+        content_lines.append("[bold yellow]CONTAINER OUTPUT:[/]")
+        # Limit output length but show key information
+        if len(result) > 1000:
+            lines = result.split('\n')
+            if len(lines) > 20:
+                shown_result = '\n'.join(lines[:10]) + f"\n... [{len(lines)-20} lines omitted] ...\n" + '\n'.join(lines[-10:])
+            else:
+                shown_result = result[:1000] + "... [truncated]"
+        else:
+            shown_result = result
+        content_lines.append(f"[dim white]{shown_result}[/]")
+    
+    border_style = "green" if success else "red"
+    console.print(Panel(
+        "\n".join(content_lines),
+        title="🟢 CONTAINER ACTION" if success else "🔴 CONTAINER ERROR",
+        border_style=border_style,
+        box=box.DOUBLE,
+        width=120
     ))
 
 def print_tool(tool_name: str, args: Dict[str, Any], status: str = "call") -> None:
@@ -159,16 +231,8 @@ def print_tool(tool_name: str, args: Dict[str, Any], status: str = "call") -> No
 
 def print_tool_result(content: str, success: bool = True, max_length: int = 300) -> None:
     """Print tool results with syntax highlighting but no panels."""
-    if not RICH_AVAILABLE:
-        print(content[:max_length] + ('...' if len(content) > max_length else ''))
-        return
-    
-    # Truncate if too long
-    display_content = content[:max_length] + ('...' if len(content) > max_length else '')
-    
-    # Simple colored output without panels
-    style = "green" if success else "red"
-    console.print(f"    {display_content}", style=style)
+    # This function is now replaced by print_container_action, but keeping for compatibility
+    pass
 
 def print_progress(message: str) -> None:
     """Print progress messages in yellow."""
@@ -186,7 +250,11 @@ def print_turn_header(turn: int, max_turns: int) -> None:
     
     # Create a simple progress indicator
     progress_bar = "█" * min(turn, 20) + "░" * max(0, 20 - turn)
-    console.print(f"\n[bold blue]Turn {turn}/{max_turns}[/] [{progress_bar}]")
+    
+    # Add clear separator
+    console.print("\n" + "="*120, style="dim white")
+    console.print(f"[bold blue]TURN {turn}/{max_turns}[/] [{progress_bar}]", style="bold blue")
+    console.print("="*120, style="dim white")
 
 def print_task_header(task_id: str, tools: List[str], time_limit: int, max_turns: int) -> None:
     """Print beautiful task header."""
@@ -1513,7 +1581,12 @@ Work through this step by step, using the available tools to complete the task."
                             )
                             
                             if self.verbose:
-                                print_tool_result(tool_result.content, tool_result.success)
+                                print_container_action(
+                                    f"Tool: {tool_call.function}",
+                                    f"Args: {json.dumps(tool_call.arguments, indent=2)}",
+                                    tool_result.content,
+                                    tool_result.success
+                                )
                             
                             # Add tool result to conversation
                             result_message = ChatMessage(
@@ -1524,10 +1597,15 @@ Work through this step by step, using the available tools to complete the task."
                             state.add_message(result_message)
                             
                             # Debug: Check files after each tool execution
-                            if tool_call.function in ["bash", "python"] and self.verbose:
+                            if tool_call.function in ["bash", "python", "write_file"] and self.verbose:
                                 try:
                                     debug_ls = await computer.execute_shell("ls -la /results/ || echo 'no /results dir'")
-                                    print_docker(f"After {tool_call.function}: /results contains: {debug_ls.text_output.strip()}", "info")
+                                    print_container_action(
+                                        "Debug: File System Check",
+                                        f"After {tool_call.function} execution",
+                                        debug_ls.text_output.strip(),
+                                        debug_ls.exit_code == 0
+                                    )
                                 except:
                                     pass
                             
