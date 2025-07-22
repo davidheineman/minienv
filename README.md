@@ -1,0 +1,1 @@
+A docker service for LLM environments. Each rollout has access to its own container.
