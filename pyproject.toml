@@ -1,0 +1,110 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "minienv"
+version = "0.0.1"
+requires-python = ">=3.10"
+dependencies = [
+    "docker",
+    "rich",
+    "openai", # TODO: replace with litellm
+    "pydantic",
+]
+
+[project.scripts]
+minienv = "minienv.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "mypy>=1.0,<1.4",
+    "black>=23.1,<24.0",
+    "isort>=5.12,<5.14",
+    "build",
+    "twine>=1.11.0",
+]
+beaker = [
+    "beaker-py>=2.0", 
+    "GitPython>=3.0,<4.0",
+    # "beaker-gantry>=3.0.0rc1"
+]
+all = ["minienv[dev,beaker]"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["minienv*"]
+exclude = []
+
+[tool.black]
+line-length = 100
+include = '\.pyi?$'
+exclude = '''
+(
+      __pycache__
+    | \.git
+    | \.mypy_cache
+    | \.pytest_cache
+    | \.vscode
+    | \.venv
+    | \bdist\b
+    | \bdoc\b
+    | scratch/
+)
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+ignore = ["F403", "F405", "E501", "F811", "E731"]
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".venv",
+    "venv",
+    ".mypy_cache",
+    "__pycache__",
+    ".nox",
+    ".pants.d",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "doc",
+    "pretrain_data",
+    "inference",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]
+
+[tool.pyright]
+reportPrivateImportUsage = false
+
+[tool.mypy]
+ignore_missing_imports = true
+no_site_packages = true
+check_untyped_defs = true
+no_namespace_packages = true
+disable_error_code = "has-type"
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+strict_optional = false
