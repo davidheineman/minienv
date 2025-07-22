@@ -546,7 +546,7 @@ class DockerContainer:
             print_docker(f"Contents of /results: {results_ls.text_output.strip()}", "info")
             
             # Also check for specific files we expect
-            fibonacci_check = await self.exec_command("ls -la /results/fibonacci.py || echo 'fibonacci.py not found'")
+            fibonacci_check = await self.exec_command("sh -c 'if [ -f /results/fibonacci.py ]; then ls -la /results/fibonacci.py; else echo fibonacci.py not found; fi'")
             print_docker(f"Fibonacci file check: {fibonacci_check.text_output.strip()}", "info")
             
             # Get tar archive of /results directory
@@ -653,21 +653,18 @@ class DockerComputerInterface(ComputerInterface):
             )
     
     async def upload_file(self, content: bytes, destination: str) -> None:
-        """Upload file content to the container."""
-        # Create tar archive with the file
-        with tempfile.NamedTemporaryFile() as tmp_tar:
-            with tarfile.open(fileobj=tmp_tar, mode='w') as tar:
-                # Create file info
-                info = tarfile.TarInfo(name=os.path.basename(destination))
-                info.size = len(content)
-                tar.addfile(info, fileobj=tarfile.io.BytesIO(content))
-            
-            tmp_tar.seek(0)
-            tar_data = tmp_tar.read()
+        """Upload file content to the container (legacy method)."""
+        # This method is kept for compatibility but WriteFileTool now uses Python directly
+        content_str = content.decode('utf-8', errors='replace')
         
-        # Upload to container
-        dest_dir = os.path.dirname(destination)
-        await self.container.upload_tar(tar_data, dest_dir)
+        # Use Python to write the file instead of shell commands
+        python_code = f"""
+with open('{destination}', 'w') as f:
+    f.write({repr(content_str)})
+"""
+        result = await self.execute_python(python_code)
+        if result.status != "success":
+            raise RuntimeError(f"Failed to upload file {destination}: {result.output}")
     
     async def download_file(self, source: str) -> bytes:
         """Download file content from the container."""
@@ -718,11 +715,81 @@ class DockerComputerInterface(ComputerInterface):
 class Task(BaseModel):
     """Represents a computational task to be executed in a container."""
     task_id: str
+    instructions: str
     config: ContainerConfig
     timeout: int = 3600
+    task_folder: Optional[str] = None  # Path to task folder for mounting
     
     class Config:
         arbitrary_types_allowed = True
+
+
+class TaskLoader:
+    """Loads tasks from the tasks/ directory structure."""
+    
+    def __init__(self, tasks_dir: str = "tasks"):
+        self.tasks_dir = Path(tasks_dir)
+    
+    def list_tasks(self) -> List[str]:
+        """List all available task IDs."""
+        if not self.tasks_dir.exists():
+            return []
+        
+        tasks = []
+        for item in self.tasks_dir.iterdir():
+            if item.is_dir() and (item / "instructions.md").exists():
+                tasks.append(item.name)
+        return tasks
+    
+    def load_task(self, task_id: str, base_config: ContainerConfig) -> Task:
+        """Load a specific task by ID."""
+        task_folder = self.tasks_dir / task_id
+        instructions_file = task_folder / "instructions.md"
+        
+        if not task_folder.exists():
+            raise ValueError(f"Task folder not found: {task_folder}")
+        
+        if not instructions_file.exists():
+            raise ValueError(f"Instructions file not found: {instructions_file}")
+        
+        # Read instructions
+        instructions = instructions_file.read_text(encoding='utf-8')
+        
+        # Create config with task folder mounted
+        config = ContainerConfig(
+            image=base_config.image,
+            environment=base_config.environment.copy() if base_config.environment else {},
+            volumes=base_config.volumes.copy() if base_config.volumes else {},
+            ports=base_config.ports.copy() if base_config.ports else [],
+            privileged=base_config.privileged,
+            gpu_access=base_config.gpu_access,
+            network_mode=base_config.network_mode,
+            memory_limit=base_config.memory_limit,
+            timeout=base_config.timeout,
+            export_results=base_config.export_results,
+            results_host_path=base_config.results_host_path
+        )
+        
+        # Mount the task folder to /task in the container
+        config.volumes[str(task_folder.absolute())] = "/task"
+        
+        return Task(
+            task_id=task_id,
+            instructions=instructions,
+            config=config,
+            timeout=base_config.timeout,
+            task_folder=str(task_folder.absolute())
+        )
+    
+    def get_task_instructions(self, task_id: str) -> str:
+        """Get just the instructions for a task without loading full config."""
+        task_folder = self.tasks_dir / task_id
+        instructions_file = task_folder / "instructions.md"
+        
+        if not instructions_file.exists():
+            raise ValueError(f"Instructions file not found: {instructions_file}")
+        
+        return instructions_file.read_text(encoding='utf-8')
 
 
 class Step(BaseModel):
@@ -1054,6 +1121,85 @@ class ReadFileTool(Tool):
             )
 
 
+class WriteFileTool(Tool):
+    """Tool for writing content to files."""
+    
+    def __init__(self, computer: ComputerInterface):
+        self.computer = computer
+    
+    @property
+    def name(self) -> str:
+        return "write_file"
+    
+    @property
+    def description(self) -> str:
+        return """Write content to a file.
+        
+        Args:
+            file (str): Path to the file to write
+            content (str): Content to write to the file
+            
+        Returns:
+            Confirmation of file creation
+        """
+    
+    async def execute(self, **kwargs) -> ToolResult:
+        """Write content to a file using Python."""
+        file_path = kwargs.get("file", "")
+        content = kwargs.get("content", "")
+        
+        if not file_path:
+            return ToolResult(
+                tool_call_id=kwargs.get("tool_call_id", ""),
+                content="Error: No file path provided",
+                success=False,
+                error="Missing 'file' argument"
+            )
+        
+        try:
+            # Use Python to write the file - this avoids shell escaping issues
+            python_code = f"""
+import os
+# Ensure directory exists
+os.makedirs(os.path.dirname('{file_path}'), exist_ok=True)
+
+# Write the file
+with open('{file_path}', 'w') as f:
+    f.write({repr(content)})
+
+# Verify it was written
+import os
+size = os.path.getsize('{file_path}')
+print(f"Successfully wrote {{size}} bytes to {file_path}")
+"""
+            
+            result = await self.computer.execute_python(python_code)
+            
+            if result.status == "success":
+                # Also verify with ls
+                ls_result = await self.computer.execute_shell(f"ls -la '{file_path}'")
+                return ToolResult(
+                    tool_call_id=kwargs.get("tool_call_id", ""),
+                    content=f"{result.output}\n{ls_result.text_output}",
+                    success=True
+                )
+            else:
+                return ToolResult(
+                    tool_call_id=kwargs.get("tool_call_id", ""),
+                    content=f"Python write failed: {result.output}",
+                    success=False,
+                    error=result.output
+                )
+            
+        except Exception as e:
+            return ToolResult(
+                tool_call_id=kwargs.get("tool_call_id", ""),
+                content=f"Error writing file: {str(e)}",
+                success=False,
+                error=str(e)
+            )
+
+
 class EndTaskTool(Tool):
     """Tool for ending the task (submission)."""
     
@@ -1131,6 +1277,12 @@ class OpenAILLMClient:
                     "max_lines": {"type": "integer", "description": "Maximum lines to read", "default": 50}
                 }
                 tool_def["function"]["parameters"]["required"] = ["file"]
+            elif tool.name == "write_file":
+                tool_def["function"]["parameters"]["properties"] = {
+                    "file": {"type": "string", "description": "Path to the file to write"},
+                    "content": {"type": "string", "description": "Content to write to the file"}
+                }
+                tool_def["function"]["parameters"]["required"] = ["file", "content"]
             elif tool.name == "end_task":
                 tool_def["function"]["parameters"]["properties"]["message"] = {
                     "type": "string",
@@ -1237,6 +1389,7 @@ class ReActAgent(TaskSolver):
         self.add_tool(BashTool(computer))
         self.add_tool(PythonTool(computer))
         self.add_tool(ReadFileTool(computer))
+        self.add_tool(WriteFileTool(computer))
         self.add_tool(EndTaskTool())
         
         # Initialize conversation
@@ -1253,21 +1406,32 @@ class ReActAgent(TaskSolver):
 Available tools:
 - bash: Execute bash commands in the container
 - python: Execute Python code directly
-- read_file: Read files with pagination
+- read_file: Read files with pagination (supports files in /task and other locations)
+- write_file: Write files (save outputs to /results for export)
 - end_task: Signal task completion
 
 You should work step by step, using tools to explore, code, test, and verify your solution.
 Always test your code to make sure it works correctly before completing the task.
 
-IMPORTANT: Save any output files to the /results directory so they can be exported to the host system.
-The /results directory is automatically mounted and will be available on the host after task completion."""
+IMPORTANT: 
+- The task instructions and any supporting files are mounted at /task in the container
+- Save any output files to the /results directory so they can be exported to the host system
+- You can read /task/instructions.md to see the full task instructions
+- The /results directory is automatically mounted and will be available on the host after task completion"""
         )
         state.add_message(system_message)
         
-        # Initial user message
+        # Initial user message with task-specific instructions
         user_message = ChatMessage(
             role="user",
-            content=f"Please solve this task: {task.task_id}. Demonstrate your capabilities by exploring the environment and creating a simple example."
+            content=f"""Please solve this task: {task.task_id}
+
+The task instructions are available at /task/instructions.md in the container. Please start by reading the instructions to understand what you need to do.
+
+Task preview:
+{task.instructions}
+
+Work through this step by step, using the available tools to complete the task."""
         )
         state.add_message(user_message)
         
@@ -1516,11 +1680,11 @@ class EvaluationPipeline:
 # UPDATED EXAMPLE USAGE
 # =============================================================================
 
-async def paperbench_style_example():
-    """Example using the PaperBench-style ReAct agent."""
+async def run_task_example(task_id: str = None):
+    """Example using the PaperBench-style ReAct agent with dynamic task loading."""
     
-    # Configure container with Python and common tools
-    agent_config = ContainerConfig(
+    # Configure base container with Python and common tools
+    base_config = ContainerConfig(
         image="python:3.11-slim",
         environment={
             "PYTHONUNBUFFERED": "1",
@@ -1528,234 +1692,52 @@ async def paperbench_style_example():
         },
         timeout=1800  # 30 minutes
     )
+    
+    # Load tasks from the tasks/ directory
+    task_loader = TaskLoader("tasks")
+    available_tasks = task_loader.list_tasks()
+    
+    if not available_tasks:
+        print("❌ No tasks found in tasks/ directory")
+        return
+    
+    print(f"📋 Available tasks: {', '.join(available_tasks)}")
+    
+    # Use provided task_id or default to first available task
+    if task_id is None:
+        task_id = available_tasks[0]
+        print(f"🎯 No task specified, using: {task_id}")
+    elif task_id not in available_tasks:
+        print(f"❌ Task '{task_id}' not found. Available: {', '.join(available_tasks)}")
+        return
+    else:
+        print(f"🎯 Running task: {task_id}")
+    
+    # Load the specific task
+    try:
+        task = task_loader.load_task(task_id, base_config)
+        print(f"✅ Loaded task '{task_id}' from {task.task_folder}")
+    except Exception as e:
+        print(f"❌ Failed to load task '{task_id}': {e}")
+        return
     
     # Create runtime and run ReAct agent
     runtime = ContainerRuntime()
     
-    task = Task(
-        task_id="react-agent-demo",
-        config=agent_config
-    )
-    
-    # Use ReAct agent instead of simple solver
-    react_agent = ReActAgent()
-    
-    try:
-        results = await runtime.run_task(task, react_agent)
-        
-        print("=== ReAct Agent Results ===")
-        for result in results:
-            if isinstance(result, Step):
-                print(f"[{result.step_type.upper()}] {result.content}")
-            elif isinstance(result, FinalResult):
-                print_final_result(result.success, result.score, result.execution_time, result.output)
-        
-    finally:
-        await runtime.cleanup()
-
-
-async def fibonacci_demo():
-    """Demo using GPT-4o-mini to write a Fibonacci function."""
-    
-    # Configure container with Python
-    agent_config = ContainerConfig(
-        image="python:3.11-slim",
-        environment={
-            "PYTHONUNBUFFERED": "1",
-            "DEBIAN_FRONTEND": "noninteractive"
-        },
-        timeout=1800  # 30 minutes
-    )
-    
-    # Create runtime and run ReAct agent with real LLM
-    runtime = ContainerRuntime()
-    
-    task = Task(
-        task_id="fibonacci-challenge",
-        config=agent_config
-    )
-    
-    # Initialize OpenAI client
+    # Use ReAct agent
     try:
         openai_client = OpenAILLMClient(model="gpt-4o-mini")
         react_agent = ReActAgent(llm_client=openai_client, verbose=True)
     except Exception as e:
         print(f"❌ Failed to initialize OpenAI client: {e}")
         print("💡 Make sure you have OPENAI_API_KEY set in your environment")
-        return
-    
-    # Override the initial user message for Fibonacci task
-    original_solve = react_agent.solve
-    
-    async def fibonacci_solve(task: Task, computer: ComputerInterface):
-        """Custom solve method with Fibonacci-specific instructions."""
-        start_time = time.time()
-        
-        # Initialize tools
-        react_agent.add_tool(BashTool(computer))
-        react_agent.add_tool(PythonTool(computer))
-        react_agent.add_tool(ReadFileTool(computer))
-        react_agent.add_tool(EndTaskTool())
-        
-        # Initialize conversation
-        state = ConversationState(
-            max_turns=15,
-            time_limit=task.timeout
-        )
-        
-        # System message
-        system_message = ChatMessage(
-            role="system",
-            content="""You are a helpful AI agent that can use tools to solve programming tasks. 
-
-Available tools:
-- bash: Execute bash commands in the container
-- python: Execute Python code directly
-- read_file: Read files with pagination
-- end_task: Signal task completion
-
-You should work step by step, using tools to explore, code, test, and verify your solution.
-Always test your code to make sure it works correctly before completing the task.
-
-IMPORTANT: Save any output files to the /results directory so they can be exported to the host system.
-The /results directory is automatically mounted and will be available on the host after task completion."""
-        )
-        state.add_message(system_message)
-        
-        # Fibonacci-specific user message
-        user_message = ChatMessage(
-            role="user",
-            content="""Please write a Python function that calculates and prints the first 100 Fibonacci numbers.
-
-Requirements:
-1. Create a function called `fibonacci(n)` that generates the first n Fibonacci numbers
-2. The function should return a list of the numbers
-3. Create a script that calls fibonacci(100) and prints all the numbers nicely formatted
-4. Test your function to make sure it works correctly
-5. Save the script to a file called 'fibonacci.py' in the /results directory
-
-Please work through this step by step, testing your code as you go."""
-        )
-        state.add_message(user_message)
-        
-        if react_agent.verbose:
-            print_task_header(task.task_id, list(react_agent.tools.keys()), task.timeout, state.max_turns)
-        
-        try:
-            # Main ReAct loop (same as original but with custom state)
-            while not state.completed:
-                state.current_turn += 1
-                
-                if react_agent.verbose:
-                    print_turn_header(state.current_turn, state.max_turns)
-                
-                yield Step(
-                    step_type="reasoning",
-                    content=f"Turn {state.current_turn}: GPT-4o-mini generating response"
-                )
-                
-                # Show what we're sending to the LLM
-                if react_agent.verbose:
-                    print_model_input(state.get_recent_context(), list(react_agent.tools.keys()))
-                
-                # Get model response
-                response = await react_agent.llm_client.generate_response(
-                    state.get_recent_context(),
-                    list(react_agent.tools.values())
-                )
-                state.add_message(response)
-                
-                # Show what we got back from the LLM
-                if react_agent.verbose:
-                    print_model_output(response.content, response.tool_calls)
-                
-                # Execute tool calls
-                if response.tool_calls:
-                    yield Step(
-                        step_type="tool_execution",
-                        content=f"Executing {len(response.tool_calls)} tool call(s): {[tc.function for tc in response.tool_calls]}"
-                    )
-                    
-                    for tool_call in response.tool_calls:
-                        if tool_call.function in react_agent.tools:
-                            tool = react_agent.tools[tool_call.function]
-                            
-                            # Execute tool
-                            tool_result = await tool.execute(
-                                tool_call_id=tool_call.id,
-                                **tool_call.arguments
-                            )
-                            
-                            if react_agent.verbose:
-                                print_tool_result(tool_result.content, tool_result.success)
-                            
-                            # Add tool result to conversation
-                            result_message = ChatMessage(
-                                role="tool",
-                                content=tool_result.content,
-                                tool_call_id=tool_call.id
-                            )
-                            state.add_message(result_message)
-                            
-                            # Check if this was an end_task call
-                            if tool_call.function == "end_task":
-                                execution_time = time.time() - start_time
-                                yield FinalResult(
-                                    success=True,
-                                    score=1.0,
-                                    output=tool_result.content,
-                                    execution_time=execution_time
-                                )
-                                return
-                        else:
-                            # Unknown tool
-                            error_message = ChatMessage(
-                                role="tool",
-                                content=f"Error: Unknown tool '{tool_call.function}'",
-                                tool_call_id=tool_call.id
-                            )
-                            state.add_message(error_message)
-                            if react_agent.verbose:
-                                print_tool(tool_call.function, tool_call.arguments, "error")
-                
-                # Add progress update
-                if state.current_turn % 5 == 0:
-                    elapsed = time.time() - start_time
-                    print_progress(f"Progress update: Turn {state.current_turn}, {elapsed:.1f}s elapsed. How is the Fibonacci function coming along?")
-                
-                if react_agent.verbose:
-                    print()  # Add spacing between turns
-            
-            # If we exit the loop without end_task, return final result
-            execution_time = time.time() - start_time
-            if react_agent.verbose:
-                print_final_result(False, 0.5, execution_time, f"Task ended due to limits (turns: {state.current_turn}, time: {execution_time:.1f}s)")
-            yield FinalResult(
-                success=False,
-                score=0.5,  # Partial credit for attempting
-                output=f"Task ended due to limits (turns: {state.current_turn}, time: {execution_time:.1f}s)",
-                execution_time=execution_time
-            )
-            
-        except Exception as e:
-            execution_time = time.time() - start_time
-            if react_agent.verbose:
-                print_final_result(False, 0.0, execution_time, f"Error during execution: {str(e)}")
-            yield FinalResult(
-                success=False,
-                score=0.0,
-                output=f"Error during execution: {str(e)}",
-                execution_time=execution_time,
-                error=str(e)
-            )
-    
-    # Replace the solve method
-    react_agent.solve = fibonacci_solve
+        print("🔄 Falling back to mock agent...")
+        react_agent = ReActAgent(verbose=True)
     
     try:
         results = await runtime.run_task(task, react_agent)
         
-        print("=== Fibonacci Challenge Results ===")
+        print(f"=== Task '{task_id}' Results ===")
         for result in results:
             if isinstance(result, Step):
                 print(f"[{result.step_type.upper()}] {result.content}")
@@ -1766,8 +1748,39 @@ Please work through this step by step, testing your code as you go."""
         await runtime.cleanup()
 
 
+async def list_tasks_example():
+    """Example showing how to list available tasks."""
+    task_loader = TaskLoader("tasks")
+    available_tasks = task_loader.list_tasks()
+    
+    if not available_tasks:
+        print("❌ No tasks found in tasks/ directory")
+        return
+    
+    print("📋 Available tasks:")
+    for task_id in available_tasks:
+        try:
+            instructions = task_loader.get_task_instructions(task_id)
+            # Show first line of instructions as preview
+            preview = instructions.split('\n')[0][:80] + ('...' if len(instructions.split('\n')[0]) > 80 else '')
+            print(f"  • {task_id}: {preview}")
+        except Exception as e:
+            print(f"  • {task_id}: (error reading instructions: {e})")
+
+
 async def example_usage():
-    await fibonacci_demo()
+    """Main example that demonstrates task loading and execution."""
+    import sys
+    
+    # Check if a specific task was requested
+    task_id = None
+    if len(sys.argv) > 1:
+        task_id = sys.argv[1]
+    
+    if task_id == "list":
+        await list_tasks_example()
+    else:
+        await run_task_example(task_id)
 
 
 if __name__ == "__main__":
