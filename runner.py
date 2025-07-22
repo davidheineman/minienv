@@ -20,6 +20,7 @@ import logging
 import os
 import random
 import shlex
+import shutil
 import tarfile
 import tempfile
 import time
@@ -719,9 +720,19 @@ class Task(BaseModel):
     config: ContainerConfig
     timeout: int = 3600
     task_folder: Optional[str] = None  # Path to task folder for mounting
+    _is_temp_folder: bool = False  # Internal flag to track if task_folder is temporary
     
     class Config:
         arbitrary_types_allowed = True
+    
+    def cleanup_temp_files(self) -> None:
+        """Clean up temporary task files if they were created."""
+        if self._is_temp_folder and self.task_folder and os.path.exists(self.task_folder):
+            try:
+                shutil.rmtree(self.task_folder, ignore_errors=True)
+                print_docker(f"Cleaned up temporary task directory: {self.task_folder}", "info")
+            except Exception as e:
+                print_docker(f"Failed to clean up temporary directory {self.task_folder}: {e}", "warning")
 
 
 class TaskLoader:
@@ -755,7 +766,23 @@ class TaskLoader:
         # Read instructions
         instructions = instructions_file.read_text(encoding='utf-8')
         
-        # Create config with task folder mounted
+        # Create a temporary directory for the task files (Docker-accessible)
+        # Use /tmp which is typically accessible to Docker on macOS
+        temp_task_dir = tempfile.mkdtemp(prefix=f"nanoeval_task_{task_id}_")
+        
+        # Copy all task files to the temporary directory
+        try:
+            for item in task_folder.iterdir():
+                if item.is_file():
+                    shutil.copy2(item, temp_task_dir)
+                elif item.is_dir():
+                    shutil.copytree(item, Path(temp_task_dir) / item.name)
+        except Exception as e:
+            # Clean up temp dir if copy fails
+            shutil.rmtree(temp_task_dir, ignore_errors=True)
+            raise ValueError(f"Failed to copy task files: {e}")
+        
+        # Create config with temporary task folder mounted
         config = ContainerConfig(
             image=base_config.image,
             environment=base_config.environment.copy() if base_config.environment else {},
@@ -770,16 +797,18 @@ class TaskLoader:
             results_host_path=base_config.results_host_path
         )
         
-        # Mount the task folder to /task in the container
-        config.volumes[str(task_folder.absolute())] = "/task"
+        # Mount the temporary task folder to /task in the container
+        config.volumes[temp_task_dir] = "/task"
         
-        return Task(
+        task = Task(
             task_id=task_id,
             instructions=instructions,
             config=config,
             timeout=base_config.timeout,
-            task_folder=str(task_folder.absolute())
+            task_folder=temp_task_dir
         )
+        task._is_temp_folder = True
+        return task
     
     def get_task_instructions(self, task_id: str) -> str:
         """Get just the instructions for a task without loading full config."""
@@ -1593,12 +1622,17 @@ class ContainerRuntime:
         """Run a task with the given solver."""
         results = []
         
-        async with self.create_computer(task.config) as computer:
-            logger.info(f"Running task {task.task_id}")
-            
-            async for result in solver.solve(task, computer):
-                results.append(result)
-                logger.info(f"Task {task.task_id}: {result}")
+        try:
+            async with self.create_computer(task.config) as computer:
+                logger.info(f"Running task {task.task_id}")
+                
+                async for result in solver.solve(task, computer):
+                    results.append(result)
+                    logger.info(f"Task {task.task_id}: {result}")
+        
+        finally:
+            # Clean up temporary task files
+            task.cleanup_temp_files()
         
         return results
     
