@@ -1,19 +1,3 @@
-#!/usr/bin/env python3
-"""
-Simplified Nanoeval Docker Orchestration System
-===============================================
-
-Core components extracted from the nanoeval/alcatraz infrastructure:
-- Task abstraction and configuration
-- Docker container lifecycle management  
-- Container communication interface
-- Async execution and resource management
-- Multi-stage isolation for evaluation pipelines
-
-This is a standalone implementation that captures the essential architecture
-of how nanoeval orchestrates Docker containers for code execution tasks.
-"""
-
 import asyncio
 import json
 import logging
@@ -36,37 +20,23 @@ import docker
 from docker.models.containers import Container
 from pydantic import BaseModel, Field
 
-# Rich imports for beautiful console output
-try:
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.text import Text
-    from rich.table import Table
-    from rich.progress import Progress, SpinnerColumn, TextColumn
-    from rich.syntax import Syntax
-    from rich.markdown import Markdown
-    from rich import box
-    RICH_AVAILABLE = True
-except ImportError:
-    RICH_AVAILABLE = False
-    print("⚠️  Rich not available. Install with: pip install rich")
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.syntax import Syntax
+from rich.markdown import Markdown
+from rich import box
 
-# Configure rich console
-if RICH_AVAILABLE:
-    console = Console()
-else:
-    console = None
+console = Console()
 
-# Configure logging
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # Rich formatting functions
 def print_docker(message: str, status: str = "info") -> None:
     """Print Docker-related messages in blue."""
-    if not RICH_AVAILABLE:
-        print(f"🐳 {message}")
-        return
     
     color = {
         "info": "blue",
@@ -79,10 +49,6 @@ def print_docker(message: str, status: str = "info") -> None:
 
 def print_model(message: str, role: str = "assistant") -> None:
     """Print model I/O messages in purple/magenta."""
-    if not RICH_AVAILABLE:
-        print(f"{message}")
-        return
-    
     color = {
         "assistant": "bright_magenta",
         "user": "cyan", 
@@ -94,10 +60,6 @@ def print_model(message: str, role: str = "assistant") -> None:
 
 def print_model_input(messages: List[Any], tools: List[str]) -> None:
     """Print the exact input being sent to the LLM."""
-    if not RICH_AVAILABLE:
-        print(f"LLM Input: {len(messages)} messages, {len(tools)} tools")
-        return
-    
     # Get the actual conversation content
     content_lines = []
     content_lines.append(f"[bold yellow]Available Tools:[/] {', '.join(tools)}")
@@ -131,7 +93,7 @@ def print_model_input(messages: List[Any], tools: List[str]) -> None:
     
     console.print(Panel(
         "\n".join(content_lines),
-        title="🔵 EXACT MODEL CONTEXT",
+        title="MODEL CONTEXT",
         border_style="bright_blue",
         box=box.DOUBLE,
         width=120
@@ -139,10 +101,6 @@ def print_model_input(messages: List[Any], tools: List[str]) -> None:
 
 def print_model_output(response_content: str, tool_calls: List[Any]) -> None:
     """Print the exact output from the LLM."""
-    if not RICH_AVAILABLE:
-        print(f"LLM Output: {response_content}, {len(tool_calls)} tool calls")
-        return
-    
     content_lines = []
     
     if response_content and response_content.strip():
@@ -165,20 +123,13 @@ def print_model_output(response_content: str, tool_calls: List[Any]) -> None:
     
     console.print(Panel(
         "\n".join(content_lines),
-        title="🟣 EXACT MODEL RESPONSE", 
+        title="MODEL RESPONSE", 
         border_style="bright_magenta",
         box=box.DOUBLE,
         width=120
     ))
 
 def print_container_action(action_type: str, details: str, result: str = "", success: bool = True) -> None:
-    """Print what's happening inside the container."""
-    if not RICH_AVAILABLE:
-        print(f"Container: {action_type} - {details}")
-        if result:
-            print(f"Result: {result}")
-        return
-    
     content_lines = []
     
     # Action header
@@ -204,7 +155,7 @@ def print_container_action(action_type: str, details: str, result: str = "", suc
     border_style = "green" if success else "red"
     console.print(Panel(
         "\n".join(content_lines),
-        title="🟢 CONTAINER ACTION" if success else "🔴 CONTAINER ERROR",
+        title="CONTAINER ACTION" if success else "CONTAINER ERROR",
         border_style=border_style,
         box=box.DOUBLE,
         width=120
@@ -212,10 +163,6 @@ def print_container_action(action_type: str, details: str, result: str = "", suc
 
 def print_tool(tool_name: str, args: Dict[str, Any], status: str = "call") -> None:
     """Print tool-related messages in green/red."""
-    if not RICH_AVAILABLE:
-        print(f"{tool_name}({args})")
-        return
-    
     if status == "call":
         console.print(f"  [bold yellow]Tool Call:[/] [cyan]{tool_name}[/]", end="")
         if args:
@@ -236,18 +183,10 @@ def print_tool_result(content: str, success: bool = True, max_length: int = 300)
 
 def print_progress(message: str) -> None:
     """Print progress messages in yellow."""
-    if not RICH_AVAILABLE:
-        print(f"{message}")
-        return
-    
     console.print(f"[bold yellow]Progress:[/] {message}")
 
 def print_turn_header(turn: int, max_turns: int) -> None:
     """Print turn header with progress bar."""
-    if not RICH_AVAILABLE:
-        print(f"Turn {turn}")
-        return
-    
     # Create a simple progress indicator
     progress_bar = "█" * min(turn, 20) + "░" * max(0, 20 - turn)
     
@@ -258,12 +197,6 @@ def print_turn_header(turn: int, max_turns: int) -> None:
 
 def print_task_header(task_id: str, tools: List[str], time_limit: int, max_turns: int) -> None:
     """Print beautiful task header."""
-    if not RICH_AVAILABLE:
-        print(f"Starting task: {task_id}")
-        print(f"Available tools: {tools}")
-        print(f"Time limit: {time_limit}s, Max turns: {max_turns}")
-        return
-    
     # Create a beautiful header panel
     header_content = f"""
 [bold green]Task:[/] {task_id}
@@ -281,12 +214,6 @@ def print_task_header(task_id: str, tools: List[str], time_limit: int, max_turns
 
 def print_final_result(success: bool, score: float, execution_time: float, output: str) -> None:
     """Print final results with rich formatting."""
-    if not RICH_AVAILABLE:
-        print(f"[FINAL] Success: {success}, Score: {score}")
-        print(f"Output: {output}")
-        print(f"Execution time: {execution_time:.2f}s")
-        return
-    
     # Create results table
     table = Table(title="🏁 Results", box=box.ROUNDED)
     table.add_column("Metric", style="bold cyan")
@@ -461,7 +388,7 @@ class DockerContainer:
                 'detach': True,
                 'environment': self.config.environment,
                 'remove': False,  # We'll remove manually for cleanup control
-                'command': ['sleep', 'infinity'],  # Keep container running
+                'command': ['sh', '-c', 'mkdir -p /results && sleep infinity'],  # Create /results and keep container running
             }
             
             # Port mapping
@@ -506,10 +433,14 @@ class DockerContainer:
             # Wait for container to be ready
             await self._wait_for_health()
             
-            # Create /results directory for file exports
-            if self.config.export_results:
+            # Verify /results directory exists (should be created by startup command)
+            result = await self.exec_command("ls -ld /results")
+            if result.exit_code == 0:
+                print_docker("Verified /results directory exists in container", "info")
+            else:
+                # Fallback: create it if somehow it doesn't exist
                 await self.exec_command("mkdir -p /results")
-                print_docker("Created /results directory in container", "info")
+                print_docker("Created /results directory in container (fallback)", "warning")
             
             print_docker(f"Container {self.container_id} started successfully", "success")
             return self.container
@@ -835,8 +766,10 @@ class TaskLoader:
         instructions = instructions_file.read_text(encoding='utf-8')
         
         # Create a temporary directory for the task files (Docker-accessible)
-        # Use /tmp which is typically accessible to Docker on macOS
-        temp_task_dir = tempfile.mkdtemp(prefix=f"nanoeval_task_{task_id}_")
+        # Use a temp directory within the current working directory to ensure Docker can access it
+        temp_base_dir = Path.cwd() / "temp_tasks"
+        temp_base_dir.mkdir(exist_ok=True)
+        temp_task_dir = tempfile.mkdtemp(prefix=f"nanoeval_task_{task_id}_", dir=str(temp_base_dir))
         
         # Copy all task files to the temporary directory
         try:
@@ -1325,6 +1258,109 @@ class EndTaskTool(Tool):
         )
 
 
+class MockLLMClient:
+    """Mock LLM client that provides hardcoded responses for testing."""
+    
+    def __init__(self, model: str = "mock"):
+        self.model = model
+        self.turn_count = 0
+    
+    async def generate_response(self, messages: List[ChatMessage], tools: List[Tool]) -> ChatMessage:
+        """Generate a mock response based on the task."""
+        self.turn_count += 1
+        
+        # Look for task context to determine appropriate response
+        last_message = messages[-1] if messages else None
+        
+        # Check for tool results to determine next step
+        has_read_instructions = any(
+            msg.role == "tool" and "fibonacci" in msg.content.lower() 
+            for msg in messages
+        )
+        
+        has_created_file = any(
+            msg.role == "tool" and "fibonacci.py" in msg.content.lower()
+            for msg in messages  
+        )
+        
+        if self.turn_count == 1:
+            # First turn: read instructions
+            return ChatMessage(
+                role="assistant",
+                content="I'll start by reading the task instructions to understand what needs to be done.",
+                tool_calls=[
+                    ToolCall(
+                        function="read_file",
+                        arguments={"file": "/task/instructions.md"}
+                    )
+                ]
+            )
+        elif self.turn_count == 2 and has_read_instructions:
+            # Second turn: create fibonacci script
+            fibonacci_code = '''def fibonacci(n):
+    fib_sequence = []
+    a, b = 0, 1
+    for _ in range(n):
+        fib_sequence.append(a)
+        a, b = b, a + b
+    return fib_sequence
+
+if __name__ == "__main__":
+    fib_numbers = fibonacci(100)
+    print("Fibonacci numbers:")
+    print(", ".join(map(str, fib_numbers)))'''
+            
+            return ChatMessage(
+                role="assistant",
+                content="Now I'll create the fibonacci function and save it to the results directory.",
+                tool_calls=[
+                    ToolCall(
+                        function="write_file",
+                        arguments={
+                            "file": "/results/fibonacci.py",
+                            "content": fibonacci_code
+                        }
+                    )
+                ]
+            )
+        elif self.turn_count == 3:
+            # Third turn: test the code
+            return ChatMessage(
+                role="assistant", 
+                content="Let me test the fibonacci function to make sure it works correctly.",
+                tool_calls=[
+                    ToolCall(
+                        function="python",
+                        arguments={
+                            "code": '''def fibonacci(n):
+    fib_sequence = []
+    a, b = 0, 1
+    for _ in range(n):
+        fib_sequence.append(a)
+        a, b = b, a + b
+    return fib_sequence
+
+fib_numbers = fibonacci(100)
+print("Fibonacci numbers:")
+print(", ".join(map(str, fib_numbers)))'''
+                        }
+                    )
+                ]
+            )
+        else:
+            # Final turn: end task
+            return ChatMessage(
+                role="assistant",
+                content="Perfect! I've successfully created the fibonacci function that generates the first 100 Fibonacci numbers. The script has been saved to /results/fibonacci.py and tested.",
+                tool_calls=[
+                    ToolCall(
+                        function="end_task",
+                        arguments={"message": "Fibonacci script created and tested successfully."}
+                    )
+                ]
+            )
+
+
 class OpenAILLMClient:
     """Real OpenAI client for GPT-4o-mini."""
     
@@ -1599,7 +1635,7 @@ Work through this step by step, using the available tools to complete the task."
                             # Debug: Check files after each tool execution
                             if tool_call.function in ["bash", "python", "write_file"] and self.verbose:
                                 try:
-                                    debug_ls = await computer.execute_shell("ls -la /results/ || echo 'no /results dir'")
+                                    debug_ls = await computer.execute_shell("sh -c 'ls -la /results/ 2>/dev/null || echo \"no /results dir\"'")
                                     print_container_action(
                                         "Debug: File System Check",
                                         f"After {tool_call.function} execution",
@@ -1813,17 +1849,14 @@ async def run_task_example(task_id: str = None):
         print("❌ No tasks found in tasks/ directory")
         return
     
-    print(f"📋 Available tasks: {', '.join(available_tasks)}")
+    print(f"Available tasks: {', '.join(available_tasks)}")
     
     # Use provided task_id or default to first available task
-    if task_id is None:
-        task_id = available_tasks[0]
-        print(f"🎯 No task specified, using: {task_id}")
-    elif task_id not in available_tasks:
+    if task_id not in available_tasks:
         print(f"❌ Task '{task_id}' not found. Available: {', '.join(available_tasks)}")
         return
     else:
-        print(f"🎯 Running task: {task_id}")
+        print(f"Running task: {task_id}")
     
     # Load the specific task
     try:
@@ -1842,9 +1875,10 @@ async def run_task_example(task_id: str = None):
         react_agent = ReActAgent(llm_client=openai_client, verbose=True)
     except Exception as e:
         print(f"❌ Failed to initialize OpenAI client: {e}")
-        print("💡 Make sure you have OPENAI_API_KEY set in your environment")
-        print("🔄 Falling back to mock agent...")
-        react_agent = ReActAgent(verbose=True)
+        print("Make sure you have OPENAI_API_KEY set in your environment")
+        print("Falling back to mock agent...")
+        mock_client = MockLLMClient()
+        react_agent = ReActAgent(llm_client=mock_client, verbose=True)
     
     try:
         results = await runtime.run_task(task, react_agent)
@@ -1869,7 +1903,7 @@ async def list_tasks_example():
         print("❌ No tasks found in tasks/ directory")
         return
     
-    print("📋 Available tasks:")
+    print("Available tasks:")
     for task_id in available_tasks:
         try:
             instructions = task_loader.get_task_instructions(task_id)
