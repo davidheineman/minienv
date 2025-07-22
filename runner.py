@@ -84,10 +84,10 @@ def print_model_input(messages: List[Any], tools: List[str]) -> None:
             
             # Show tool calls if present
             if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                content_lines.append(f"[dim yellow]  Tool calls: {len(msg.tool_calls)}[/]")
+                content_lines.append(f"[dim yellow]Tool calls: {len(msg.tool_calls)}[/]")
                 for tc in msg.tool_calls:
                     args_preview = str(tc.arguments)[:100] + ("..." if len(str(tc.arguments)) > 100 else "")
-                    content_lines.append(f"[dim]    {tc.function}({args_preview})[/]")
+                    content_lines.append(f"  {tc.function}({args_preview})")
             
             content_lines.append("")
     
@@ -1547,6 +1547,7 @@ You should work step by step, using tools to explore, code, test, and verify you
 Always test your code to make sure it works correctly before completing the task.
 
 IMPORTANT: 
+- You have access to bash, so you can install any dependencies if you need them.
 - The task instructions and any supporting files are mounted at /task in the container
 - Save any output files to the /results directory so they can be exported to the host system
 - You can read /task/instructions.md to see the full task instructions
