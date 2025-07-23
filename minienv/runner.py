@@ -960,6 +960,551 @@ class EndTaskTool(Tool):
         )
 
 
+class StrReplaceTool(Tool):
+    """Tool for advanced string replacement in files."""
+
+    def __init__(self, computer: ComputerInterface):
+        self.computer = computer
+
+    @property
+    def name(self) -> str:
+        return "str_replace"
+
+    @property
+    def description(self) -> str:
+        return """Replace a specific string in a file with a new string.
+        
+        Args:
+            file (str): Path to the file to edit
+            old_str (str): The exact string to replace (must be unique in the file)
+            new_str (str): The new string to replace with (optional, defaults to empty string for deletion)
+            
+        Returns:
+            Confirmation of replacement with a snippet of the changed area
+        """
+
+    async def execute(self, **kwargs) -> ToolResult:
+        """Replace a string in a file."""
+        file_path = kwargs.get("file", "")
+        old_str = kwargs.get("old_str", "")
+        new_str = kwargs.get("new_str", "")
+
+        if not file_path:
+            return ToolResult(
+                tool_call_id=kwargs.get("tool_call_id", ""),
+                content="Error: No file path provided",
+                success=False,
+                error="Missing 'file' argument",
+            )
+
+        if not old_str:
+            return ToolResult(
+                tool_call_id=kwargs.get("tool_call_id", ""),
+                content="Error: old_str cannot be empty. Use write_file or insert instead.",
+                success=False,
+                error="Empty 'old_str' argument",
+            )
+
+        try:
+            # Read the current file content
+            result = await self.computer.execute_shell(f"cat '{file_path}'")
+            if result.exit_code != 0:
+                return ToolResult(
+                    tool_call_id=kwargs.get("tool_call_id", ""),
+                    content=f"Error reading file: {result.text_output}",
+                    success=False,
+                    error=result.text_output,
+                )
+
+            file_content = result.text_output
+            
+            # Check if old_str exists and is unique
+            occurrences = file_content.count(old_str)
+            if occurrences == 0:
+                return ToolResult(
+                    tool_call_id=kwargs.get("tool_call_id", ""),
+                    content=f"Error: old_str '{old_str}' not found in {file_path}",
+                    success=False,
+                    error="String not found",
+                )
+            elif occurrences > 1:
+                # Find line numbers where the string appears
+                lines = file_content.split('\n')
+                line_numbers = [i+1 for i, line in enumerate(lines) if old_str in line]
+                return ToolResult(
+                    tool_call_id=kwargs.get("tool_call_id", ""),
+                    content=f"Error: old_str '{old_str}' appears {occurrences} times in lines {line_numbers}. Please make it unique.",
+                    success=False,
+                    error="Multiple occurrences found",
+                )
+
+            # Perform the replacement
+            new_content = file_content.replace(old_str, new_str)
+
+            # Write the new content using Python to avoid shell escaping issues
+            python_code = f"""
+import os
+# Write the file
+with open('{file_path}', 'w') as f:
+    f.write({repr(new_content)})
+
+# Show a snippet around the change
+lines = {repr(new_content)}.split('\\n')
+# Find the line where replacement occurred
+old_lines = {repr(file_content)}.split('\\n')
+new_lines = lines
+
+# Find the changed line by comparing
+changed_line = -1
+for i, (old_line, new_line) in enumerate(zip(old_lines, new_lines)):
+    if old_line != new_line:
+        changed_line = i
+        break
+
+if changed_line == -1 and len(old_lines) != len(new_lines):
+    # Lines were added/removed
+    changed_line = min(len(old_lines), len(new_lines))
+
+ if changed_line >= 0:
+     start = max(0, changed_line - 3)
+     end = min(len(lines), changed_line + 4)
+     snippet_lines = [f"{{i+1:4d}}: {{line}}" for i, line in enumerate(lines[start:end], start)]
+     print("File edited successfully!")
+     print("\\nSnippet around the change:")
+     print("\\n".join(snippet_lines))
+ else:
+     print("File edited successfully!")
+
+size = os.path.getsize('{file_path}')
+print(f"\\nFile size: {{size}} bytes")
+"""
+
+            python_result = await self.computer.execute_python(python_code)
+            
+            if python_result.status == "success":
+                return ToolResult(
+                    tool_call_id=kwargs.get("tool_call_id", ""),
+                    content=python_result.output,
+                    success=True,
+                )
+            else:
+                return ToolResult(
+                    tool_call_id=kwargs.get("tool_call_id", ""),
+                    content=f"Error during replacement: {python_result.output}",
+                    success=False,
+                    error=python_result.output,
+                )
+
+        except Exception as e:
+            return ToolResult(
+                tool_call_id=kwargs.get("tool_call_id", ""),
+                content=f"Error during str_replace: {str(e)}",
+                success=False,
+                error=str(e),
+            )
+
+
+class InsertTool(Tool):
+    """Tool for inserting text at a specific line in a file."""
+
+    def __init__(self, computer: ComputerInterface):
+        self.computer = computer
+
+    @property
+    def name(self) -> str:
+        return "insert"
+
+    @property
+    def description(self) -> str:
+        return """Insert text at a specific line number in a file.
+        
+        Args:
+            file (str): Path to the file to edit
+            line (int): Line number to insert after (0 = beginning of file)
+            text (str): Text to insert
+            
+        Returns:
+            Confirmation of insertion with a snippet around the inserted area
+        """
+
+    async def execute(self, **kwargs) -> ToolResult:
+        """Insert text at a specific line."""
+        file_path = kwargs.get("file", "")
+        insert_line = kwargs.get("line", 0)
+        text = kwargs.get("text", "")
+
+        if not file_path:
+            return ToolResult(
+                tool_call_id=kwargs.get("tool_call_id", ""),
+                content="Error: No file path provided",
+                success=False,
+                error="Missing 'file' argument",
+            )
+
+        try:
+            # Read the current file content
+            result = await self.computer.execute_shell(f"cat '{file_path}' 2>/dev/null || echo ''")
+            file_content = result.text_output
+            
+            # Split into lines
+            lines = file_content.split('\n') if file_content else ['']
+            
+            # Validate insert_line
+            if insert_line < 0 or insert_line > len(lines):
+                return ToolResult(
+                    tool_call_id=kwargs.get("tool_call_id", ""),
+                    content=f"Error: line {insert_line} is out of range. File has {len(lines)} lines.",
+                    success=False,
+                    error="Invalid line number",
+                )
+
+            # Insert the text
+            text_lines = text.split('\n')
+            new_lines = lines[:insert_line] + text_lines + lines[insert_line:]
+            new_content = '\n'.join(new_lines)
+
+            # Write the new content
+            python_code = f"""
+import os
+# Ensure directory exists
+os.makedirs(os.path.dirname('{file_path}'), exist_ok=True)
+
+# Write the file
+with open('{file_path}', 'w') as f:
+    f.write({repr(new_content)})
+
+# Show a snippet around the insertion
+lines = {repr(new_content)}.split('\\n')
+start = max(0, {insert_line} - 3)
+end = min(len(lines), {insert_line} + len({repr(text_lines)}) + 3)
+snippet_lines = [f"{{i+1:4d}}: {{line}}" for i, line in enumerate(lines[start:end], start)]
+
+print("Text inserted successfully!")
+print("\\nSnippet around the insertion:")
+print("\\n".join(snippet_lines))
+
+size = os.path.getsize('{file_path}')
+print(f"\\nFile size: {{size}} bytes")
+"""
+
+            python_result = await self.computer.execute_python(python_code)
+            
+            if python_result.status == "success":
+                return ToolResult(
+                    tool_call_id=kwargs.get("tool_call_id", ""),
+                    content=python_result.output,
+                    success=True,
+                )
+            else:
+                return ToolResult(
+                    tool_call_id=kwargs.get("tool_call_id", ""),
+                    content=f"Error during insertion: {python_result.output}",
+                    success=False,
+                    error=python_result.output,
+                )
+
+        except Exception as e:
+            return ToolResult(
+                tool_call_id=kwargs.get("tool_call_id", ""),
+                content=f"Error during insert: {str(e)}",
+                success=False,
+                error=str(e),
+            )
+
+
+class ThinkTool(Tool):
+    """Tool for explicit reasoning and thinking steps."""
+
+    @property
+    def name(self) -> str:
+        return "think"
+
+    @property
+    def description(self) -> str:
+        return """Use this tool to think through a problem or record reasoning steps.
+        
+        This tool doesn't change the environment or obtain new information, but helps
+        you organize your thoughts and reasoning process.
+        
+        Args:
+            thought (str): Your reasoning, analysis, or thoughts about the current situation
+            
+        Returns:
+            Confirmation that the thought was recorded
+        """
+
+    async def execute(self, **kwargs) -> ToolResult:
+        """Record a thought or reasoning step."""
+        thought = kwargs.get("thought", "")
+        
+        if not thought:
+            return ToolResult(
+                tool_call_id=kwargs.get("tool_call_id", ""),
+                content="Error: No thought provided",
+                success=False,
+                error="Missing 'thought' argument",
+            )
+        
+        # The thought is just recorded in the conversation - no action needed
+        return ToolResult(
+            tool_call_id=kwargs.get("tool_call_id", ""),
+            content="Thought recorded.",
+            success=True,
+        )
+
+
+class WebSearchTool(Tool):
+    """Tool for searching the web (simplified implementation)."""
+
+    def __init__(self, computer: ComputerInterface):
+        self.computer = computer
+
+    @property
+    def name(self) -> str:
+        return "web_search"
+
+    @property
+    def description(self) -> str:
+        return """Search the web for information.
+        
+        Args:
+            query (str): Search query to look up
+            num_results (int): Number of results to return (default: 3, max: 10)
+            
+        Returns:
+            Search results with URLs and snippets
+        """
+
+    async def execute(self, **kwargs) -> ToolResult:
+        """Perform a web search using curl and basic scraping."""
+        query = kwargs.get("query", "")
+        num_results = min(kwargs.get("num_results", 3), 10)
+
+        if not query:
+            return ToolResult(
+                tool_call_id=kwargs.get("tool_call_id", ""),
+                content="Error: No search query provided",
+                success=False,
+                error="Missing 'query' argument",
+            )
+
+        try:
+            # Use Python to perform a basic web search simulation
+            # In a real implementation, you'd use Google Custom Search API or similar
+            python_code = f"""
+import urllib.parse
+import json
+
+# Simulate web search results (in real implementation, use actual search API)
+query = {repr(query)}
+encoded_query = urllib.parse.quote_plus(query)
+
+# Simulate search results based on query
+search_results = []
+
+# Add some generic helpful results based on common queries
+if any(term in query.lower() for term in ['python', 'programming', 'code']):
+    search_results.extend([
+        {{
+            "title": "Python Documentation",
+            "url": "https://docs.python.org/3/",
+            "snippet": "Official Python documentation with tutorials, library reference, and language reference."
+        }},
+        {{
+            "title": "Stack Overflow - Python",
+            "url": "https://stackoverflow.com/questions/tagged/python",
+            "snippet": "Questions and answers about Python programming."
+        }}
+    ])
+
+if any(term in query.lower() for term in ['machine learning', 'ml', 'ai']):
+    search_results.extend([
+        {{
+            "title": "Scikit-learn Documentation",
+            "url": "https://scikit-learn.org/stable/",
+            "snippet": "Machine learning library for Python with simple and efficient data mining tools."
+        }},
+        {{
+            "title": "TensorFlow Documentation",
+            "url": "https://www.tensorflow.org/",
+            "snippet": "Open source machine learning platform with comprehensive ecosystem of tools."
+        }}
+    ])
+
+if any(term in query.lower() for term in ['github', 'git', 'repository']):
+    search_results.extend([
+        {{
+            "title": "GitHub",
+            "url": "https://github.com/",
+            "snippet": "Platform for version control and collaboration for software development projects."
+        }}
+    ])
+
+# Add generic search results if no specific matches
+if not search_results:
+    search_results = [
+        {{
+            "title": f"Search results for: {{query}}",
+            "url": f"https://www.google.com/search?q={{encoded_query}}",
+            "snippet": f"Web search results for your query: {{query}}"
+        }}
+    ]
+
+# Limit results
+search_results = search_results[:{num_results}]
+
+print("Web Search Results:")
+print("=" * 50)
+for i, result in enumerate(search_results, 1):
+    print(f"{{i}}. {{result['title']}}")
+    print(f"   URL: {{result['url']}}")
+    print(f"   {{result['snippet']}}")
+    print()
+
+print(f"Found {{len(search_results)}} results for query: {{query}}")
+"""
+
+            result = await self.computer.execute_python(python_code)
+            
+            if result.status == "success":
+                return ToolResult(
+                    tool_call_id=kwargs.get("tool_call_id", ""),
+                    content=result.output,
+                    success=True,
+                )
+            else:
+                return ToolResult(
+                    tool_call_id=kwargs.get("tool_call_id", ""),
+                    content=f"Error during web search: {result.output}",
+                    success=False,
+                    error=result.output,
+                )
+
+        except Exception as e:
+            return ToolResult(
+                tool_call_id=kwargs.get("tool_call_id", ""),
+                content=f"Error during web search: {str(e)}",
+                success=False,
+                error=str(e),
+            )
+
+
+class WebBrowserTool(Tool):
+    """Tool for basic web browsing (simplified implementation)."""
+
+    def __init__(self, computer: ComputerInterface):
+        self.computer = computer
+
+    @property
+    def name(self) -> str:
+        return "web_browser"
+
+    @property
+    def description(self) -> str:
+        return """Navigate to a web page and extract its content.
+        
+        Args:
+            url (str): URL to navigate to
+            action (str): Action to perform - 'go' to navigate, 'extract' to get text content
+            
+        Returns:
+            Web page content or navigation result
+        """
+
+    async def execute(self, **kwargs) -> ToolResult:
+        """Navigate to a web page and extract content."""
+        url = kwargs.get("url", "")
+        action = kwargs.get("action", "go")
+
+        if not url:
+            return ToolResult(
+                tool_call_id=kwargs.get("tool_call_id", ""),
+                content="Error: No URL provided",
+                success=False,
+                error="Missing 'url' argument",
+            )
+
+        try:
+            # Use curl to fetch web content
+            if action == "go" or action == "extract":
+                python_code = f"""
+import subprocess
+import re
+from urllib.parse import urlparse
+
+url = {repr(url)}
+print(f"Navigating to: {{url}}")
+
+try:
+    # Use curl to fetch the webpage
+    result = subprocess.run([
+        'curl', '-s', '-L', '--max-time', '10', 
+        '--user-agent', 'Mozilla/5.0 (compatible; WebBrowser/1.0)',
+        url
+    ], capture_output=True, text=True, timeout=15)
+    
+    if result.returncode != 0:
+        print(f"Error fetching URL: {{result.stderr}}")
+    else:
+        html_content = result.stdout
+        
+        # Basic HTML parsing to extract text content
+        # Remove HTML tags
+        text_content = re.sub(r'<script[^>]*>.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+        text_content = re.sub(r'<style[^>]*>.*?</style>', '', text_content, flags=re.DOTALL | re.IGNORECASE)
+        text_content = re.sub(r'<[^>]+>', '', text_content)
+        
+        # Clean up whitespace
+        text_content = re.sub(r'\\s+', ' ', text_content).strip()
+        
+        # Limit content length
+        if len(text_content) > 2000:
+            text_content = text_content[:2000] + "... [content truncated]"
+        
+        print("Successfully fetched webpage content:")
+        print("-" * 50)
+        print(text_content)
+        print("-" * 50)
+        print(f"Content length: {{len(result.stdout)}} characters (showing first 2000)")
+        
+except subprocess.TimeoutExpired:
+    print("Error: Request timed out")
+except Exception as e:
+    print(f"Error fetching webpage: {{e}}")
+"""
+
+                result = await self.computer.execute_python(python_code)
+                
+                if result.status == "success":
+                    return ToolResult(
+                        tool_call_id=kwargs.get("tool_call_id", ""),
+                        content=result.output,
+                        success=True,
+                    )
+                else:
+                    return ToolResult(
+                        tool_call_id=kwargs.get("tool_call_id", ""),
+                        content=f"Error during web browsing: {result.output}",
+                        success=False,
+                        error=result.output,
+                    )
+            else:
+                return ToolResult(
+                    tool_call_id=kwargs.get("tool_call_id", ""),
+                    content=f"Unknown action: {action}. Use 'go' or 'extract'.",
+                    success=False,
+                    error="Invalid action",
+                )
+
+        except Exception as e:
+            return ToolResult(
+                tool_call_id=kwargs.get("tool_call_id", ""),
+                content=f"Error during web browsing: {str(e)}",
+                success=False,
+                error=str(e),
+            )
+
+
 class MockLLMClient:
     """Mock LLM client that provides hardcoded responses for testing."""
 
@@ -993,7 +1538,19 @@ class MockLLMClient:
                 ],
             )
         elif self.turn_count == 2 and has_read_instructions:
-            # Second turn: create fibonacci script
+            # Second turn: think about the approach
+            return ChatMessage(
+                role="assistant",
+                content="Let me think about the best approach for this task.",
+                tool_calls=[
+                    ToolCall(
+                        function="think",
+                        arguments={"thought": "I need to create a fibonacci function that generates the first 100 numbers. I'll create a Python script that implements this efficiently and saves it to the results directory."},
+                    )
+                ],
+            )
+        elif self.turn_count == 3:
+            # Third turn: create fibonacci script
             fibonacci_code = """def fibonacci(n):
     fib_sequence = []
     a, b = 0, 1
@@ -1017,8 +1574,8 @@ if __name__ == "__main__":
                     )
                 ],
             )
-        elif self.turn_count == 3:
-            # Third turn: test the code
+        elif self.turn_count == 4:
+            # Fourth turn: test the code
             return ChatMessage(
                 role="assistant",
                 content="Let me test the fibonacci function to make sure it works correctly.",
@@ -1115,6 +1672,39 @@ class OpenAILLMClient:
                     "content": {"type": "string", "description": "Content to write to the file"},
                 }
                 tool_def["function"]["parameters"]["required"] = ["file", "content"]
+            elif tool.name == "str_replace":
+                tool_def["function"]["parameters"]["properties"] = {
+                    "file": {"type": "string", "description": "Path to the file to edit"},
+                    "old_str": {"type": "string", "description": "The exact string to replace (must be unique)"},
+                    "new_str": {"type": "string", "description": "The new string to replace with", "default": ""},
+                }
+                tool_def["function"]["parameters"]["required"] = ["file", "old_str"]
+            elif tool.name == "insert":
+                tool_def["function"]["parameters"]["properties"] = {
+                    "file": {"type": "string", "description": "Path to the file to edit"},
+                    "line": {"type": "integer", "description": "Line number to insert after (0 = beginning)", "default": 0},
+                    "text": {"type": "string", "description": "Text to insert"},
+                }
+                tool_def["function"]["parameters"]["required"] = ["file", "text"]
+            elif tool.name == "think":
+                tool_def["function"]["parameters"]["properties"]["thought"] = {
+
+                    "type": "string",
+                    "description": "Your reasoning or thoughts about the current situation",
+                }
+                tool_def["function"]["parameters"]["required"] = ["thought"]
+            elif tool.name == "web_search":
+                tool_def["function"]["parameters"]["properties"] = {
+                    "query": {"type": "string", "description": "Search query to look up"},
+                    "num_results": {"type": "integer", "description": "Number of results (max 10)", "default": 3},
+                }
+                tool_def["function"]["parameters"]["required"] = ["query"]
+            elif tool.name == "web_browser":
+                tool_def["function"]["parameters"]["properties"] = {
+                    "url": {"type": "string", "description": "URL to navigate to"},
+                    "action": {"type": "string", "description": "Action: 'go' or 'extract'", "default": "go"},
+                }
+                tool_def["function"]["parameters"]["required"] = ["url"]
             elif tool.name == "end_task":
                 tool_def["function"]["parameters"]["properties"]["message"] = {
                     "type": "string",
@@ -1232,6 +1822,11 @@ class ReActAgent(TaskSolver):
         self.add_tool(PythonTool(computer))
         self.add_tool(ReadFileTool(computer))
         self.add_tool(WriteFileTool(computer))
+        self.add_tool(StrReplaceTool(computer))
+        self.add_tool(InsertTool(computer))
+        self.add_tool(ThinkTool())
+        self.add_tool(WebSearchTool(computer))
+        self.add_tool(WebBrowserTool(computer))
         self.add_tool(EndTaskTool())
 
         # Initialize conversation
@@ -1247,6 +1842,11 @@ Available tools:
 - python: Execute Python code directly
 - read_file: Read files with pagination (supports files in /task and other locations)
 - write_file: Write files (save outputs to /results for export)
+- str_replace: Replace specific strings in files (for precise editing)
+- insert: Insert text at specific line numbers in files
+- think: Record your reasoning and thought process
+- web_search: Search the web for information (simplified implementation)
+- web_browser: Navigate to web pages and extract content
 - end_task: Signal task completion
 
 You should work step by step, using tools to explore, code, test, and verify your solution.
@@ -1257,7 +1857,11 @@ IMPORTANT:
 - The task instructions and any supporting files are mounted at /task in the container
 - Save any output files to the /results directory so they can be exported to the host system
 - You can read /task/instructions.md to see the full task instructions
-- The /results directory is automatically mounted and will be available on the host after task completion""",
+- The /results directory is automatically mounted and will be available on the host after task completion
+- Use str_replace for precise file editing when you need to modify specific parts of existing files
+- Use the think tool to organize your reasoning and planning
+- Web tools provide basic functionality for research (simplified implementations)
+- Try not to write over and over again to a file and edit when applicable instead.""",
         )
         state.add_message(system_message)
 

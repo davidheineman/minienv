@@ -22,9 +22,11 @@ minienv list
 minienv hello_world
 minienv fibonacci
 minienv attention
+minienv transformer
 
 # Run with beaker backend
 minienv hello_world -b beaker
 minienv fibonacci -b beaker
 minienv attention -b beaker
+minienv transformer -b beaker
 ```
