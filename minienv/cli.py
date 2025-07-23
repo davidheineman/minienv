@@ -10,7 +10,7 @@ async def example_usage():
     if len(sys.argv) > 1:
         task_id = sys.argv[1]
 
-    if task_id == "list":
+    if task_id == "list" or task_id is None:
         await list_tasks_example()
     else:
         await run_task_example(task_id)

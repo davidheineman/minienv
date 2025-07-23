@@ -16,7 +16,7 @@ from beaker import (
 from beaker.types import BeakerDataset
 from rich.console import Console
 
-from minienv import Backend
+from . import Backend
 from minienv.constants import SERVER_DIR, TASKS_DIR
 
 console = Console()

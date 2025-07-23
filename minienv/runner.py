@@ -2,22 +2,19 @@ import asyncio
 import json
 import logging
 import os
-import random
 import shlex
 import shutil
-import tarfile
 import tempfile
 import time
-import uuid
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
-from enum import StrEnum, auto
+
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
+import uuid
 
-import docker
-from docker.models.containers import Container
+
 from pydantic import BaseModel, Field
 from rich import box
 from rich.console import Console
@@ -25,6 +22,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from minienv.constants import TASKS_DIR
+from minienv.backend.local import LocalBackend
 
 console = Console()
 
@@ -305,13 +303,7 @@ class TraceLogger:
 # =============================================================================
 
 
-class NetworkMode(StrEnum):
-    """Network configuration for containers."""
 
-    NONE = auto()
-    WEBCACHE_GET_ONLY = auto()
-    UNPROXIED = auto()
-    API_ACCESS = auto()
 
 
 class ExecutionResult(BaseModel):
@@ -344,7 +336,7 @@ class ContainerConfig:
     ports: List[int] = None
     privileged: bool = False
     gpu_access: bool = False
-    network_mode: NetworkMode = NetworkMode.UNPROXIED
+    network_mode: str = "bridge"  # Default network mode
     memory_limit: Optional[str] = None
     timeout: int = 3600  # seconds
     export_results: bool = True  # Export /results to host
@@ -405,383 +397,8 @@ class ComputerInterface(ABC):
 # =============================================================================
 
 
-class PortManager:
-    """Manages dynamic port allocation to avoid conflicts."""
 
-    def __init__(self, port_range: Tuple[int, int] = (10000, 32767)):
-        self.available_ports = set(range(port_range[0], port_range[1] + 1))
-        self.allocated_ports = set()
 
-    def allocate_port(self) -> int:
-        """Allocate a random available port."""
-        if not self.available_ports:
-            raise RuntimeError("No available ports")
-
-        port = random.choice(list(self.available_ports))
-        self.available_ports.remove(port)
-        self.allocated_ports.add(port)
-        logger.info(f"Allocated port {port}")
-        return port
-
-    def release_port(self, port: int) -> None:
-        """Release a previously allocated port."""
-        if port in self.allocated_ports:
-            self.allocated_ports.remove(port)
-            self.available_ports.add(port)
-            logger.info(f"Released port {port}")
-
-
-class DockerContainer:
-    """Manages a single Docker container's lifecycle."""
-
-    def __init__(self, config: ContainerConfig, port_manager: PortManager):
-        self.config = config
-        self.port_manager = port_manager
-        self.container: Optional[Container] = None
-        self.host_ports: List[int] = []
-        self.docker_client = docker.from_env()
-        self.container_id = f"nanoeval-{uuid.uuid4().hex[:8]}"
-
-    async def start(self) -> Container:
-        """Start the Docker container with the given configuration."""
-        try:
-            # Pull image if needed
-            print_docker(f"Pulling image: {self.config.image}", "info")
-            await asyncio.to_thread(self.docker_client.images.pull, self.config.image)
-
-            # Allocate ports
-            self.host_ports = [self.port_manager.allocate_port() for _ in self.config.ports]
-
-            # Configure container options
-            container_options = {
-                "image": self.config.image,
-                "name": self.container_id,
-                "detach": True,
-                "environment": self.config.environment,
-                "remove": False,  # We'll remove manually for cleanup control
-                "command": [
-                    "sh",
-                    "-c",
-                    "mkdir -p /results && sleep infinity",
-                ],  # Create /results and keep container running
-            }
-
-            # Port mapping
-            if self.config.ports:
-                container_options["ports"] = {
-                    f"{container_port}/tcp": host_port
-                    for container_port, host_port in zip(self.config.ports, self.host_ports)
-                }
-
-            # Volume mounts
-            if self.config.volumes:
-                container_options["volumes"] = {
-                    host_path: {"bind": container_path, "mode": "rw"}
-                    for host_path, container_path in self.config.volumes.items()
-                }
-
-            # GPU access
-            if self.config.gpu_access:
-                container_options["runtime"] = "nvidia"
-                container_options["environment"]["NVIDIA_VISIBLE_DEVICES"] = "all"
-
-            # Privileged mode
-            if self.config.privileged:
-                container_options["privileged"] = True
-
-            # Memory limit
-            if self.config.memory_limit:
-                container_options["mem_limit"] = self.config.memory_limit
-
-            # Network configuration
-            if self.config.network_mode == NetworkMode.NONE:
-                container_options["network_mode"] = "none"
-            elif self.config.network_mode == NetworkMode.UNPROXIED:
-                container_options["network_mode"] = "bridge"
-
-            # Start container
-            print_docker(f"Starting container: {self.container_id}", "info")
-            self.container = await asyncio.to_thread(
-                self.docker_client.containers.run, **container_options
-            )
-
-            # Wait for container to be ready
-            await self._wait_for_health()
-
-            # Verify /results directory exists (should be created by startup command)
-            result = await self.exec_command("ls -ld /results")
-            if result.exit_code == 0:
-                print_docker("Verified /results directory exists in container", "info")
-            else:
-                # Fallback: create it if somehow it doesn't exist
-                await self.exec_command("mkdir -p /results")
-                print_docker("Created /results directory in container (fallback)", "warning")
-
-            print_docker(f"Container {self.container_id} started successfully", "success")
-            return self.container
-
-        except Exception as e:
-            await self.cleanup()
-            raise RuntimeError(f"Failed to start container: {e}") from e
-
-    async def _wait_for_health(self, timeout: int = 30) -> None:
-        """Wait for container to be healthy and ready."""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                if self.container:
-                    self.container.reload()
-                    if self.container.status == "running":
-                        # Try a simple command to verify readiness
-                        result = await asyncio.to_thread(
-                            self.container.exec_run, 'echo "health check"'
-                        )
-                        if result.exit_code == 0:
-                            print_docker(
-                                f"Container {self.container_id} health check passed", "success"
-                            )
-                            return
-                        else:
-                            print_docker(
-                                f"Health check command failed with exit code: {result.exit_code}",
-                                "warning",
-                            )
-                    else:
-                        print_docker(f"Container status: {self.container.status}", "warning")
-                await asyncio.sleep(1)
-            except Exception as e:
-                print_docker(f"Health check failed: {e}", "warning")
-                await asyncio.sleep(1)
-
-        # Get container logs for debugging
-        if self.container:
-            try:
-                logs = await asyncio.to_thread(self.container.logs)
-                print_docker(f"Container logs: {logs.decode('utf-8', errors='replace')}", "error")
-            except Exception as e:
-                print_docker(f"Could not get container logs: {e}", "error")
-
-        raise RuntimeError(f"Container {self.container_id} failed health check")
-
-    async def exec_command(self, command: str, timeout: int = 60) -> ExecutionResult:
-        """Execute a command in the container."""
-        if not self.container:
-            raise RuntimeError("Container not started")
-
-        try:
-            logger.debug(f"Executing command: {command}")
-            result = await asyncio.wait_for(
-                asyncio.to_thread(self.container.exec_run, command), timeout=timeout
-            )
-            return ExecutionResult(output=result.output, exit_code=result.exit_code)
-        except asyncio.TimeoutError:
-            raise RuntimeError(f"Command timed out after {timeout}s: {command}")
-
-    async def upload_tar(self, tar_data: bytes, destination: str) -> None:
-        """Upload tar archive to container."""
-        if not self.container:
-            raise RuntimeError("Container not started")
-
-        with tempfile.NamedTemporaryFile() as tmp_file:
-            tmp_file.write(tar_data)
-            tmp_file.flush()
-
-            await asyncio.to_thread(self.container.put_archive, destination, tmp_file.name)
-
-    async def download_tar(self, source: str) -> bytes:
-        """Download file/directory as tar archive from container."""
-        if not self.container:
-            raise RuntimeError("Container not started")
-
-        tar_stream, _ = await asyncio.to_thread(self.container.get_archive, source)
-
-        # Collect tar data
-        tar_data = b""
-        for chunk in tar_stream:
-            tar_data += chunk
-
-        return tar_data
-
-    async def export_results(self) -> Optional[str]:
-        """Export results from the container to the host using Docker API."""
-        if not self.container or not self.config.export_results:
-            return None
-
-        try:
-            import os
-            import tarfile
-            import tempfile
-
-            # Ensure host directory exists
-            abs_results_path = os.path.abspath(self.config.results_host_path)
-            os.makedirs(abs_results_path, exist_ok=True)
-
-            # Check what files exist in /results
-            results_ls = await self.exec_command("ls -la /results/")
-            print_docker(f"Contents of /results: {results_ls.text_output.strip()}", "info")
-
-            # Also check for specific files we expect
-            fibonacci_check = await self.exec_command(
-                "sh -c 'if [ -f /results/fibonacci.py ]; then ls -la /results/fibonacci.py; else echo fibonacci.py not found; fi'"
-            )
-            print_docker(f"Fibonacci file check: {fibonacci_check.text_output.strip()}", "info")
-
-            # Get tar archive of /results directory
-            try:
-                tar_data = await self.download_tar("/results")
-                print_docker(f"Downloaded tar size: {len(tar_data)} bytes", "info")
-
-                if len(tar_data) > 1024:  # More than just directory structure
-                    # Extract tar data to host directory
-                    with tempfile.NamedTemporaryFile() as tmp_tar:
-                        tmp_tar.write(tar_data)
-                        tmp_tar.seek(0)
-
-                        with tarfile.open(fileobj=tmp_tar, mode="r") as tar:
-                            # List what's in the tar
-                            tar_contents = tar.getnames()
-                            print_docker(f"Tar contents: {tar_contents}", "info")
-
-                            # Extract all files to the results directory
-                            tar.extractall(path=abs_results_path, filter="data")
-
-                    print_docker(f"Results exported to {abs_results_path}", "success")
-
-                    # List what we actually extracted
-                    extracted_files = []
-                    for root, dirs, files in os.walk(abs_results_path):
-                        for file in files:
-                            rel_path = os.path.relpath(os.path.join(root, file), abs_results_path)
-                            extracted_files.append(rel_path)
-                    print_docker(f"Extracted files: {extracted_files}", "info")
-
-                    return abs_results_path
-                else:
-                    print_docker(f"No files to export (tar size: {len(tar_data)} bytes)", "warning")
-                    return None
-
-            except Exception as e:
-                print_docker(f"Failed to download results: {e}", "warning")
-                return None
-
-        except Exception as e:
-            print_docker(f"Failed to export results: {e}", "warning")
-            return None
-
-    async def cleanup(self) -> None:
-        """Clean up container and allocated resources."""
-        try:
-            # Export results before cleanup
-            if self.container and self.config.export_results:
-                await self.export_results()
-
-            # Stop and remove container
-            if self.container:
-                print_docker(f"Cleaning up container: {self.container_id}", "info")
-                await asyncio.to_thread(self.container.stop, timeout=10)
-                await asyncio.to_thread(self.container.remove, force=True)
-                self.container = None
-
-            # Release allocated ports
-            for port in self.host_ports:
-                self.port_manager.release_port(port)
-            self.host_ports.clear()
-
-        except Exception as e:
-            print_docker(f"Error during cleanup: {e}", "error")
-
-
-# =============================================================================
-# DOCKER COMPUTER INTERFACE IMPLEMENTATION
-# =============================================================================
-
-
-class DockerComputerInterface(ComputerInterface):
-    """Docker-based implementation of ComputerInterface."""
-
-    def __init__(self, container: DockerContainer):
-        self.container = container
-        self.jupyter_started = False
-
-    async def execute_shell(self, command: str, timeout: int = 60) -> ExecutionResult:
-        """Execute a shell command in the container."""
-        return await self.container.exec_command(command, timeout)
-
-    async def execute_python(self, code: str, timeout: int = 60) -> JupyterExecutionResult:
-        """Execute Python code via Jupyter kernel."""
-        # For simplicity, we'll execute Python code directly via shell
-        # In a full implementation, this would use Jupyter kernel protocol
-        escaped_code = shlex.quote(code)
-        command = f"python3 -c {escaped_code}"
-
-        try:
-            result = await self.execute_shell(command, timeout)
-            status = "success" if result.exit_code == 0 else "failed"
-            return JupyterExecutionResult(
-                status=status,
-                output=result.text_output,
-                final_expression_output=None,
-                exception={"exit_code": result.exit_code} if result.exit_code != 0 else None,
-            )
-        except Exception as e:
-            return JupyterExecutionResult(
-                status="failed", output=str(e), exception={"error": str(e)}
-            )
-
-    async def upload_file(self, content: bytes, destination: str) -> None:
-        """Upload file content to the container (legacy method)."""
-        # This method is kept for compatibility but WriteFileTool now uses Python directly
-        content_str = content.decode("utf-8", errors="replace")
-
-        # Use Python to write the file instead of shell commands
-        python_code = f"""
-with open('{destination}', 'w') as f:
-    f.write({repr(content_str)})
-"""
-        result = await self.execute_python(python_code)
-        if result.status != "success":
-            raise RuntimeError(f"Failed to upload file {destination}: {result.output}")
-
-    async def download_file(self, source: str) -> bytes:
-        """Download file content from the container."""
-        tar_data = await self.container.download_tar(source)
-
-        # Extract file content from tar
-        with tempfile.NamedTemporaryFile() as tmp_tar:
-            tmp_tar.write(tar_data)
-            tmp_tar.seek(0)
-
-            with tarfile.open(fileobj=tmp_tar, mode="r") as tar:
-                for member in tar.getmembers():
-                    if member.isfile():
-                        file_obj = tar.extractfile(member)
-                        if file_obj:
-                            return file_obj.read()
-
-        raise RuntimeError(f"Could not extract file: {source}")
-
-    async def disable_internet(self) -> None:
-        """Disable internet access using iptables."""
-        try:
-            # Block outbound connections except to local networks
-            commands = [
-                "iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT",
-                "iptables -A OUTPUT -d 10.0.0.0/8 -j ACCEPT",
-                "iptables -A OUTPUT -d 172.16.0.0/12 -j ACCEPT",
-                "iptables -A OUTPUT -d 192.168.0.0/16 -j ACCEPT",
-                "iptables -A OUTPUT -j DROP",
-            ]
-
-            for cmd in commands:
-                await self.execute_shell(cmd)
-
-            print_docker("Internet access disabled", "success")
-        except Exception as e:
-            print_docker(f"Failed to disable internet: {e}", "warning")
-
-    async def cleanup(self) -> None:
-        """Clean up container resources."""
-        await self.container.cleanup()
 
 
 # =============================================================================
@@ -1862,7 +1479,6 @@ class ContainerRuntime:
     """Manages the lifecycle of containerized task execution."""
 
     def __init__(self):
-        self.port_manager = PortManager()
         self.exit_stack = AsyncExitStack()
 
     @asynccontextmanager
@@ -1870,14 +1486,22 @@ class ContainerRuntime:
         self, config: ContainerConfig
     ) -> AsyncGenerator[ComputerInterface, None]:
         """Create and manage a computer interface for the given configuration."""
-        container = DockerContainer(config, self.port_manager)
+        # Create local backend with config parameters
+        backend = LocalBackend(
+            environment=config.environment or {"PYTHONUNBUFFERED": "1"},
+            volumes=config.volumes or {},
+            ports=config.ports or [],
+            privileged=config.privileged,
+            gpu_access=config.gpu_access,
+            memory_limit=config.memory_limit,
+            timeout=config.timeout,
+            results_host_path=config.results_host_path
+        )
 
         try:
-            # Start container
-            await container.start()
-
-            # Create interface
-            computer = DockerComputerInterface(container)
+            # Create interface using the backend adapter
+            from minienv.backend.adapter import BackendComputerInterface
+            computer = BackendComputerInterface(backend)
 
             # Register cleanup
             self.exit_stack.push_async_callback(computer.cleanup)
@@ -1885,7 +1509,7 @@ class ContainerRuntime:
             yield computer
 
         except Exception as e:
-            await container.cleanup()
+            await backend.teardown()
             raise e
 
     async def run_task(self, task: Task, solver: TaskSolver) -> List[Union[Step, FinalResult]]:
@@ -1895,6 +1519,13 @@ class ContainerRuntime:
         try:
             async with self.create_computer(task.config) as computer:
                 logger.info(f"Running task {task.task_id}")
+
+                # Initialize the backend environment with task info and existing task folder
+                await computer.backend.create_env(
+                    task_name=task.task_id, 
+                    image=task.config.image,
+                    existing_task_folder=task.task_folder
+                )
 
                 async for result in solver.solve(task, computer):
                     results.append(result)
