@@ -9,3 +9,5 @@ temp_tasks
 *.pyc
 beak.yaml
 traces
+.mypy_cache
+.ruff_cache

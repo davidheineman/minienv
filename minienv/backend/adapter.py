@@ -44,7 +44,8 @@ class BackendComputerInterface(ComputerInterface):
         
         try:
             # Create the directory first
-            await self.backend.exec_command("mkdir -p /tmp", 5)
+            import shlex
+            await self.backend.exec_command(shlex.split("mkdir -p /tmp"), 5)
             
             # Upload the Python code as a script
             await self.backend.upload_file(code.encode('utf-8'), script_name)

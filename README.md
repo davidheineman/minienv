@@ -1,5 +1,7 @@
 A docker service for LLM environments. Each rollout has access to its own container.
 
+### Setup
+
 ```sh
 pip install -e ".[all]"
 ```
@@ -9,12 +11,18 @@ pip install -e ".[all]"
 docker run hello-world
 ```
 
+### Usage
+
 ```sh
 minienv list
 ```
 
 ```sh
+# Run with local backend
 minienv hello_world
 minienv fibonacci
 minienv attention
+
+# Run with beaker backend
+minienv fibonacci -b beaker
 ```
