@@ -31,224 +31,223 @@ logger = logging.getLogger(__name__)
 
 
 # Rich formatting functions
-def print_docker(message: str, status: str = "info") -> None:
-    """Print Docker-related messages in blue."""
-
-    color = {"info": "blue", "success": "green", "error": "red", "warning": "yellow"}.get(
-        status, "blue"
-    )
-
-    console.print(f"🐳 {message}", style=f"bold {color}")
-
-
-def print_model(message: str, role: str = "assistant") -> None:
-    """Print model I/O messages in purple/magenta."""
-    color = {
-        "assistant": "bright_magenta",
-        "user": "cyan",
-        "system": "dim white",
-        "tool": "green",
-    }.get(role, "bright_magenta")
-
-    console.print(f"{message}", style=f"bold {color}")
-
-
-def print_model_input(messages: List[Any], tools: List[str]) -> None:
-    """Print the exact input being sent to the LLM."""
-    # Get the actual conversation content
-    content_lines = []
-    content_lines.append(f"[bold yellow]Available Tools:[/] {', '.join(tools)}")
-    content_lines.append("")
-
-    # Show all messages in the conversation
-    for i, msg in enumerate(messages):
-        if hasattr(msg, "role"):
-            role_color = {
-                "system": "dim white",
-                "user": "cyan",
-                "assistant": "bright_magenta",
-                "tool": "green",
-            }.get(msg.role, "white")
-
-            content_lines.append(f"[bold {role_color}]Message {i+1} ({msg.role}):[/]")
-            # Truncate very long messages but show enough context
-            msg_content = msg.content if hasattr(msg, "content") else str(msg)
-            if len(msg_content) > 500:
-                msg_content = msg_content[:500] + "... [truncated]"
-            content_lines.append(msg_content)
-
-            # Show tool calls if present
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                for tc in msg.tool_calls:
-                    args_preview = str(tc.arguments)[:100] + (
-                        "..." if len(str(tc.arguments)) > 100 else ""
-                    )
-                    content_lines.append(f"[bold pink]{tc.function}([/]{args_preview}[bold pink])[/]")
-
-            content_lines.append("")
-
-    console.print(
-        Panel(
-            "\n".join(content_lines),
-            title="MODEL CONTEXT",
-            border_style="bright_blue",
-            box=box.DOUBLE,
-            width=120,
-        )
-    )
-
-
-def print_model_output(response_content: str, tool_calls: List[Any]) -> None:
-    """Print the exact output from the LLM."""
-    content_lines = []
-
-    if response_content and response_content.strip():
-        content_lines.append("[bold bright_magenta]MODEL REASONING:[/]")
-        content_lines.append(response_content.strip())
+class ConsoleLogger:
+    """Unified console logger for all minienv output formatting."""
+    
+    def __init__(self, console: Console = None):
+        self.console = console or Console()
+        
+    def _truncate_with_suffix(self, text: str, max_length: int, suffix_length: int = 100) -> str:
+        """Truncate text showing prefix, dimmed ellipsis, and suffix."""
+        if len(text) <= max_length:
+            return text
+            
+        prefix_length = max_length - suffix_length - 20  # Reserve space for ellipsis
+        if prefix_length < 50:  # Ensure minimum prefix length
+            prefix_length = max_length // 2
+            suffix_length = max_length - prefix_length - 20
+            
+        prefix = text[:prefix_length]
+        suffix = text[-suffix_length:] if suffix_length > 0 else ""
+        
+        if suffix:
+            return f"{prefix}\n[dim]...[/]\n{suffix}"
+        else:
+            return f"{prefix}\n[dim]...[/]"
+        
+    def info(self, message: str, icon: str = "ℹ️") -> None:
+        """Print info messages."""
+        self.console.print(f"{icon} {message}", style="bold blue")
+        
+    def success(self, message: str, icon: str = "✅") -> None:
+        """Print success messages."""
+        self.console.print(f"{icon} {message}", style="bold green")
+        
+    def warning(self, message: str, icon: str = "⚠️") -> None:
+        """Print warning messages."""
+        self.console.print(f"{icon} {message}", style="bold yellow")
+        
+    def error(self, message: str, icon: str = "❌") -> None:
+        """Print error messages."""
+        self.console.print(f"{icon} {message}", style="bold red")
+        
+    def docker(self, message: str, status: str = "info") -> None:
+        """Print Docker-related messages."""
+        icon_map = {"info": "🐳", "success": "🐳", "error": "🐳", "warning": "🐳"}
+        color_map = {"info": "blue", "success": "green", "error": "red", "warning": "yellow"}
+        
+        icon = icon_map.get(status, "🐳")
+        color = color_map.get(status, "blue")
+        
+        self.console.print(f"{icon} {message}", style=f"bold {color}")
+        
+    def progress(self, message: str) -> None:
+        """Print progress messages."""
+        self.console.print(f"[bold yellow]Progress:[/] {message}")
+        
+    def model_input(self, messages: List[Any], tools: List[str]) -> None:
+        """Print the exact input being sent to the LLM."""
+        content_lines = []
+        content_lines.append(f"[bold yellow]Available Tools:[/] {', '.join(tools)}")
         content_lines.append("")
 
-    if tool_calls:
-        content_lines.append(f"[bold yellow]TOOL CALLS REQUESTED ({len(tool_calls)}):[/]")
-        for i, tc in enumerate(tool_calls, 1):
-            # Show full arguments
-            args_str = (
-                json.dumps(tc.arguments, indent=2)
-                if hasattr(tc, "arguments")
-                else str(tc.arguments)
-            )
-            content_lines.append(f"[bold pink]{tc.function}([/]{args_str}[bold pink])[/]")
-            if i < len(tool_calls):
+        # Show all messages in the conversation
+        for i, msg in enumerate(messages):
+            if hasattr(msg, "role"):
+                role_color = {
+                    "system": "dim white",
+                    "user": "cyan", 
+                    "assistant": "bright_magenta",
+                    "tool": "green",
+                }.get(msg.role, "white")
+
+                content_lines.append(f"[bold {role_color}]Message {i+1} ({msg.role}):[/]")
+                # Truncate very long messages but show enough context
+                msg_content = msg.content if hasattr(msg, "content") else str(msg)
+                msg_content = self._truncate_with_suffix(msg_content, 500, 100)
+                content_lines.append(msg_content)
+
+                # Show tool calls if present
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        args_str = str(tc.arguments)
+                        args_preview = self._truncate_with_suffix(args_str, 100, 30)
+                        content_lines.append(f"[bold white]{tc.function}[/]([bold pink]{args_preview}[/])")
+
                 content_lines.append("")
 
-    if not content_lines:
-        content_lines = ["[dim]No response content or tool calls[/]"]
-
-    console.print(
-        Panel(
-            "\n".join(content_lines),
-            title="MODEL RESPONSE",
-            border_style="bright_magenta",
-            box=box.DOUBLE,
-            width=120,
-        )
-    )
-
-
-def print_container_action(
-    action_type: str, result: str = "", success: bool = True
-) -> None:
-    content_lines = []
-
-    # Action header
-    content_lines.append(f"{action_type}")
-
-    if result and result.strip():
-        content_lines.append("")
-        content_lines.append("[bold yellow]CONTAINER OUTPUT:[/]")
-        # Limit output length but show key information
-        if len(result) > 1000:
-            lines = result.split("\n")
-            if len(lines) > 20:
-                shown_result = (
-                    "\n".join(lines[:10])
-                    + f"\n... [{len(lines)-20} lines omitted] ...\n"
-                    + "\n".join(lines[-10:])
-                )
-            else:
-                shown_result = result[:1000] + "... [truncated]"
-        else:
-            shown_result = result
-        content_lines.append(f"[dim white]{shown_result}[/]")
-
-    border_style = "green" if success else "red"
-    console.print(
-        Panel(
-            "\n".join(content_lines),
-            title="CONTAINER ACTION" if success else "CONTAINER ERROR",
-            border_style=border_style,
-            box=box.DOUBLE,
-            width=120,
-        )
-    )
-
-
-def print_tool(tool_name: str, args: Dict[str, Any], status: str = "call") -> None:
-    """Print tool-related messages in green/red."""
-    if status == "call":
-        if args:
-            # Format args nicely
-            args_str = ", ".join(
-                [f"{k}='{str(v)[:50]}{'...' if len(str(v)) > 50 else ''}'" for k, v in args.items()]
+        self.console.print(
+            Panel(
+                "\n".join(content_lines),
+                title="MODEL CONTEXT",
+                border_style="bright_blue",
+                box=box.DOUBLE,
+                width=120,
             )
-            console.print(f"[bold pink]([/]{args_str}[bold pink])[/]", style="dim")
-        else:
-            console.print("[bold pink]()[/]", style="dim")
-    elif status == "success":
-        console.print(f"[bold green]Tool Result[/] ([bold pink]{tool_name}[/]):", style="bold")
-    elif status == "error":
-        console.print(f"❌ [bold red]Tool Error[/] ([bold pink]{tool_name}[/]):", style="bold")
+        )
+        
+    def model_output(self, response_content: str, tool_calls: List[Any]) -> None:
+        """Print the exact output from the LLM."""
+        content_lines = []
 
+        if response_content and response_content.strip():
+            content_lines.append("[bold bright_magenta]MODEL REASONING:[/]")
+            content_lines.append(response_content.strip())
+            content_lines.append("")
 
-def print_tool_result(content: str, success: bool = True, max_length: int = 300) -> None:
-    """Print tool results with syntax highlighting but no panels."""
-    # This function is now replaced by print_container_action, but keeping for compatibility
-    pass
+        if tool_calls:
+            content_lines.append(f"[bold yellow]TOOL CALLS REQUESTED ({len(tool_calls)}):[/]")
+            for i, tc in enumerate(tool_calls, 1):
+                # Show full arguments
+                args_str = (
+                    json.dumps(tc.arguments, indent=2)
+                    if hasattr(tc, "arguments")
+                    else str(tc.arguments)
+                )
+                content_lines.append(f"[bold white]{tc.function}[/]([bold pink]{args_str}[/])")
+                if i < len(tool_calls):
+                    content_lines.append("")
 
+        if not content_lines:
+            content_lines = ["[dim]No response content or tool calls[/]"]
 
-def print_progress(message: str) -> None:
-    """Print progress messages in yellow."""
-    console.print(f"[bold yellow]Progress:[/] {message}")
+        self.console.print(
+            Panel(
+                "\n".join(content_lines),
+                title="MODEL RESPONSE",
+                border_style="bright_magenta",
+                box=box.DOUBLE,
+                width=120,
+            )
+        )
+        
+    def container_action(self, action_type: str, result: str = "", success: bool = True) -> None:
+        """Print container action results."""
+        content_lines = []
 
+        # Action header
+        content_lines.append(f"{action_type}")
 
-def print_turn_header(turn: int, max_turns: int) -> None:
-    """Print turn header with progress bar."""
-    # Create a simple progress indicator
-    progress_bar = "█" * min(turn, 20) + "░" * max(0, 20 - turn)
+        if result and result.strip():
+            content_lines.append("")
+            content_lines.append("[bold yellow]CONTAINER OUTPUT:[/]")
+            # Limit output length but show key information
+            if len(result) > 1000:
+                lines = result.split("\n")
+                if len(lines) > 20:
+                    shown_result = (
+                        "\n".join(lines[:10])
+                        + f"\n[dim]... [{len(lines)-20} lines omitted] ...[/]\n"
+                        + "\n".join(lines[-10:])
+                    )
+                else:
+                    shown_result = self._truncate_with_suffix(result, 1000, 200)
+            else:
+                shown_result = result
+            content_lines.append(f"[dim white]{shown_result}[/]")
 
-    # Add clear separator
-    console.print("\n" + "=" * 120, style="dim white")
-    console.print(f"[bold blue]TURN {turn}/{max_turns}[/] [{progress_bar}]", style="bold blue")
-    console.print("=" * 120, style="dim white")
+        border_style = "green" if success else "red"
+        self.console.print(
+            Panel(
+                "\n".join(content_lines),
+                title="CONTAINER ACTION" if success else "CONTAINER ERROR",
+                border_style=border_style,
+                box=box.DOUBLE,
+                width=120,
+            )
+        )
+        
+    def turn_header(self, turn: int, max_turns: int) -> None:
+        """Print turn header with progress bar."""
+        # Create a simple progress indicator
+        progress_bar = "█" * min(turn, 20) + "░" * max(0, 20 - turn)
 
-
-def print_task_header(task_id: str, tools: List[str], time_limit: int, max_turns: int) -> None:
-    """Print beautiful task header."""
-    # Create a beautiful header panel
-    header_content = f"""
+        # Add clear separator
+        self.console.print("\n" + "=" * 120, style="dim white")
+        self.console.print(f"[bold blue]TURN {turn}/{max_turns}[/] [{progress_bar}]", style="bold blue")
+        self.console.print("=" * 120, style="dim white")
+        
+    def task_header(self, task_id: str, tools: List[str], time_limit: int, max_turns: int) -> None:
+        """Print beautiful task header."""
+        # Create a beautiful header panel
+        header_content = f"""
 [bold green]Task:[/] {task_id}
 [bold blue]Available Tools:[/] {', '.join(tools)}
 [bold yellow]Time Limit:[/] {time_limit}s
 [bold cyan]Max Turns:[/] {max_turns}
-    """
+        """
 
-    console.print(
-        Panel(
-            header_content.strip(),
-            title="Agent Config",
-            border_style="bright_blue",
-            box=box.ROUNDED,
+        self.console.print(
+            Panel(
+                header_content.strip(),
+                title="Agent Config",
+                border_style="bright_blue",
+                box=box.ROUNDED,
+            )
         )
-    )
+        
+    def final_result(self, success: bool, score: float, execution_time: float, output: str) -> None:
+        """Print final results with rich formatting."""
+        # Create results table
+        table = Table(title="🏁 Results", box=box.ROUNDED)
+        table.add_column("Metric", style="bold cyan")
+        table.add_column("Value", style="bold")
+
+        success_style = "bold green" if success else "bold red"
+        success_text = "✅ Success" if success else "❌ Failed"
+
+        table.add_row("Status", f"[{success_style}]{success_text}[/]")
+        table.add_row("Score", f"[bold yellow]{score:.1f}[/]")
+        table.add_row("Execution Time", f"[bold blue]{execution_time:.2f}s[/]")
+
+        self.console.print(table)
+
+        if output:
+            self.console.print(Panel(output, title="Output", border_style="green" if success else "red"))
 
 
-def print_final_result(success: bool, score: float, execution_time: float, output: str) -> None:
-    """Print final results with rich formatting."""
-    # Create results table
-    table = Table(title="🏁 Results", box=box.ROUNDED)
-    table.add_column("Metric", style="bold cyan")
-    table.add_column("Value", style="bold")
-
-    success_style = "bold green" if success else "bold red"
-    success_text = "✅ Success" if success else "❌ Failed"
-
-    table.add_row("Status", f"[{success_style}]{success_text}[/]")
-    table.add_row("Score", f"[bold yellow]{score:.1f}[/]")
-    table.add_row("Execution Time", f"[bold blue]{execution_time:.2f}s[/]")
-
-    console.print(table)
-
-    if output:
-        console.print(Panel(output, title="Output", border_style="green" if success else "red"))
+# Global console logger instance
+console_logger = ConsoleLogger(console)
 
 
 # =============================================================================
@@ -283,7 +282,7 @@ class TraceLogger:
         with open(trace_path, "w") as f:
             f.write(json.dumps(trace_data, indent=None, separators=(",", ":")) + "\n")
 
-        print_docker(f"Trace saved to {trace_path}", "success")
+        console_logger.docker(f"Trace saved to {trace_path}", "success")
         return str(trace_path)
 
     def load_trace(self, trace_path: str) -> Dict[str, Any]:
@@ -387,15 +386,6 @@ class ComputerInterface(ABC):
 
 
 # =============================================================================
-# DOCKER CONTAINER ORCHESTRATION
-# =============================================================================
-
-
-
-
-
-
-# =============================================================================
 # TASK ABSTRACTION AND ORCHESTRATION
 # =============================================================================
 
@@ -418,9 +408,9 @@ class Task(BaseModel):
         if self._is_temp_folder and self.task_folder and os.path.exists(self.task_folder):
             try:
                 shutil.rmtree(self.task_folder, ignore_errors=True)
-                print_docker(f"Cleaned up temporary task directory: {self.task_folder}", "info")
+                console_logger.docker(f"Cleaned up temporary task directory: {self.task_folder}", "info")
             except Exception as e:
-                print_docker(
+                console_logger.docker(
                     f"Failed to clean up temporary directory {self.task_folder}: {e}", "warning"
                 )
 
@@ -1286,7 +1276,7 @@ Work through this step by step, using the available tools to complete the task."
         state.add_message(user_message)
 
         if self.verbose:
-            print_task_header(task.task_id, list(self.tools.keys()), task.timeout, state.max_turns)
+            console_logger.task_header(task.task_id, list(self.tools.keys()), task.timeout, state.max_turns)
 
         try:
             # Main ReAct loop
@@ -1294,7 +1284,7 @@ Work through this step by step, using the available tools to complete the task."
                 state.current_turn += 1
 
                 if self.verbose:
-                    print_turn_header(state.current_turn, state.max_turns)
+                    console_logger.turn_header(state.current_turn, state.max_turns)
 
                 yield Step(
                     step_type="reasoning",
@@ -1303,7 +1293,7 @@ Work through this step by step, using the available tools to complete the task."
 
                 # Show what we're sending to the LLM
                 if self.verbose:
-                    print_model_input(state.get_recent_context(), list(self.tools.keys()))
+                    console_logger.model_input(state.get_recent_context(), list(self.tools.keys()))
 
                 # Get model response
                 response = await self.llm_client.generate_response(
@@ -1313,7 +1303,7 @@ Work through this step by step, using the available tools to complete the task."
 
                 # Show what we got back from the LLM
                 if self.verbose:
-                    print_model_output(response.content, response.tool_calls)
+                    console_logger.model_output(response.content, response.tool_calls)
 
                 # Execute tool calls if any
                 if response.tool_calls:
@@ -1332,8 +1322,8 @@ Work through this step by step, using the available tools to complete the task."
                             )
 
                             if self.verbose:
-                                print_container_action(
-                                    f"[bold pink]{tool_call.function}([/]{json.dumps(tool_call.arguments, indent=2)}[bold pink])[/]",
+                                console_logger.container_action(
+                                    f"[bold white]{tool_call.function}[/]([bold pink]{json.dumps(tool_call.arguments, indent=2)}[/])",
                                     tool_result.content,
                                     tool_result.success,
                                 )
@@ -1353,9 +1343,8 @@ Work through this step by step, using the available tools to complete the task."
                                     debug_ls = await computer.execute_shell(
                                         "sh -c 'ls -la /results/ 2>/dev/null || echo \"no /results dir\"'"
                                     )
-                                    print_container_action(
-                                        "Debug: File System Check",
-                                        f"After {tool_call.function} execution",
+                                    console_logger.container_action(
+                                        f"Debug: File System Check - After {tool_call.function} execution",
                                         debug_ls.text_output.strip(),
                                         debug_ls.exit_code == 0,
                                     )
@@ -1377,7 +1366,7 @@ Work through this step by step, using the available tools to complete the task."
                                 self.trace_logger.save_trace(task.task_id, state.messages, metadata)
 
                                 if self.verbose:
-                                    print_final_result(
+                                    console_logger.final_result(
                                         True,
                                         1.0,
                                         execution_time,
@@ -1399,12 +1388,12 @@ Work through this step by step, using the available tools to complete the task."
                             )
                             state.add_message(error_message)
                             if self.verbose:
-                                print_tool(tool_call.function, tool_call.arguments, "error")
+                                console_logger.error(f"Unknown tool '{tool_call.function}'")
 
                 # Add progress update
                 if state.current_turn % 3 == 0:
                     elapsed = time.time() - start_time
-                    print_progress(
+                    console_logger.progress(
                         f"Turn {state.current_turn}, {elapsed:.1f}s elapsed. Continue working or use end_task when complete."
                     )
 
@@ -1425,7 +1414,7 @@ Work through this step by step, using the available tools to complete the task."
             self.trace_logger.save_trace(task.task_id, state.messages, metadata)
 
             if self.verbose:
-                print_final_result(
+                console_logger.final_result(
                     False,
                     0.5,
                     execution_time,
@@ -1453,7 +1442,7 @@ Work through this step by step, using the available tools to complete the task."
             self.trace_logger.save_trace(task.task_id, state.messages, metadata)
 
             if self.verbose:
-                print_final_result(False, 0.0, execution_time, f"Error during execution: {str(e)}")
+                console_logger.final_result(False, 0.0, execution_time, f"Error during execution: {str(e)}")
             yield FinalResult(
                 success=False,
                 score=0.0,
@@ -1664,7 +1653,7 @@ async def run_task_example(task_id: str = None, backend: str = "local", traces_d
             if isinstance(result, Step):
                 print(f"[{result.step_type.upper()}] {result.content}")
             elif isinstance(result, FinalResult):
-                print_final_result(
+                console_logger.final_result(
                     result.success, result.score, result.execution_time, result.output
                 )
 
