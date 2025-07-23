@@ -79,8 +79,10 @@ def launch_beaker_job(
         arguments=["--port", port],
     )
 
+    workspace_link = f"https://beaker.allen.ai/orgs/ai2/workspaces/{workspace.split('/')[1]}"
+
     # Create beaker experiment
-    with console.status("[bold yellow]creating beaker experiment...", spinner="dots") as _:
+    with console.status(f"[bold yellow]creating beaker experiment at[/] {workspace_link}", spinner="dots") as _:
         workload = beaker.experiment.create(
             name=task_name, 
             spec=spec, 
@@ -88,10 +90,11 @@ def launch_beaker_job(
         )
 
     # Wait for environment to initalize
-    with console.status("[bold yellow]initializing beaker experiment...", spinner="dots") as _:
+    with console.status(f"[bold yellow]initializing beaker experiment at[/] {workspace_link}", spinner="dots") as _:
         while (job := beaker.workload.get_latest_job(workload)) is None:
             time.sleep(0.1)
-    console.print("[bold green]environment setup complete![/bold green]")
+
+    console.print(f"[bold green]environment setup complete:[/] {workspace_link}")
 
     # Wait for startup
     with console.status("[bold yellow]waiting for job to start...", spinner="dots") as _:
