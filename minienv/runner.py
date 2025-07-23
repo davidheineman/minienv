@@ -1248,7 +1248,7 @@ class ThinkTool(Tool):
         # The thought is just recorded in the conversation - no action needed
         return ToolResult(
             tool_call_id=kwargs.get("tool_call_id", ""),
-            content="Thought recorded.",
+            content="",
             success=True,
         )
 
@@ -1899,10 +1899,25 @@ Work through this step by step, using the available tools to complete the task."
                 if self.verbose:
                     console_logger.model_input(state.get_recent_context(), list(self.tools.keys()))
 
-                # Get model response
-                response = await self.llm_client.generate_response(
-                    state.get_recent_context(), list(self.tools.values())
-                )
+                # Get model response with spinner
+                if self.verbose:
+                    from rich.spinner import Spinner
+                    from rich.live import Live
+                    from rich.text import Text
+                    
+                    spinner_text = Text("Sampling from language model...", style="bold blue")
+                    spinner = Spinner("dots", text=spinner_text)
+                    
+                    with Live(spinner, console=console, refresh_per_second=10) as live:
+                        response = await self.llm_client.generate_response(
+                            state.get_recent_context(), list(self.tools.values())
+                        )
+                        live.update("")  # Clear spinner text when done
+                else:
+                    response = await self.llm_client.generate_response(
+                        state.get_recent_context(), list(self.tools.values())
+                    )
+                
                 state.add_message(response)
 
                 # Show what we got back from the LLM
@@ -1937,23 +1952,6 @@ Work through this step by step, using the available tools to complete the task."
                                 role="tool", content=tool_result.content, tool_call_id=tool_call.id
                             )
                             state.add_message(result_message)
-
-                            # Debug: Check files after each tool execution
-                            if (
-                                tool_call.function in ["bash", "python", "write_file"]
-                                and self.verbose
-                            ):
-                                try:
-                                    debug_ls = await computer.execute_shell(
-                                        "sh -c 'ls -la /results/ 2>/dev/null || echo \"no /results dir\"'"
-                                    )
-                                    console_logger.container_action(
-                                        f"Debug: File System Check - After {tool_call.function} execution",
-                                        debug_ls.text_output.strip(),
-                                        debug_ls.exit_code == 0,
-                                    )
-                                except Exception:
-                                    pass
 
                             # Check if this was an end_task call
                             if tool_call.function == "end_task":
@@ -2222,7 +2220,7 @@ async def run_task_example(task_id: str = None, backend: str = "local", traces_d
         print(f"Available tasks: {', '.join(available_tasks)}")
         return
     else:
-        print(f"Running task: {task_id}")
+        console.rule(f"[bold green]Task:[/] [bold red]{task_id}[/]", style="bold green")
 
     # Load the specific task
     try:
@@ -2251,16 +2249,7 @@ async def run_task_example(task_id: str = None, backend: str = "local", traces_d
 
     try:
         results = await runtime.run_task(task, react_agent, backend_type=backend)
-
-        print(f"=== Task '{task_id}' Results ===")
-        for result in results:
-            if isinstance(result, Step):
-                print(f"[{result.step_type.upper()}] {result.content}")
-            elif isinstance(result, FinalResult):
-                console_logger.final_result(
-                    result.success, result.score, result.execution_time, result.output
-                )
-
+        
     finally:
         await runtime.cleanup()
 
