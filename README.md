@@ -24,5 +24,7 @@ minienv fibonacci
 minienv attention
 
 # Run with beaker backend
+minienv hello_world -b beaker
 minienv fibonacci -b beaker
+minienv attention -b beaker
 ```

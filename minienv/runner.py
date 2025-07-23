@@ -79,12 +79,12 @@ def print_model_input(messages: List[Any], tools: List[str]) -> None:
 
             # Show tool calls if present
             if hasattr(msg, "tool_calls") and msg.tool_calls:
-                content_lines.append(f"[dim yellow]Tool calls: {len(msg.tool_calls)}[/]")
+                content_lines.append(f"[dim pink]Tool calls: {len(msg.tool_calls)}[/]")
                 for tc in msg.tool_calls:
                     args_preview = str(tc.arguments)[:100] + (
                         "..." if len(str(tc.arguments)) > 100 else ""
                     )
-                    content_lines.append(f"  {tc.function}({args_preview})")
+                    content_lines.append(f"{tc.function}({args_preview})")
 
             content_lines.append("")
 
@@ -117,8 +117,7 @@ def print_model_output(response_content: str, tool_calls: List[Any]) -> None:
                 if hasattr(tc, "arguments")
                 else str(tc.arguments)
             )
-            content_lines.append(f"[cyan]{i}. {tc.function}[/]")
-            content_lines.append(f"[dim]{args_str}[/]")
+            content_lines.append(f"{tc.function}({args_str})")
             if i < len(tool_calls):
                 content_lines.append("")
 
@@ -137,15 +136,12 @@ def print_model_output(response_content: str, tool_calls: List[Any]) -> None:
 
 
 def print_container_action(
-    action_type: str, details: str, result: str = "", success: bool = True
+    action_type: str, result: str = "", success: bool = True
 ) -> None:
     content_lines = []
 
     # Action header
-    action_color = "green" if success else "red"
-    status_symbol = "✅" if success else "❌"
-    content_lines.append(f"[bold {action_color}]{status_symbol} ACTION:[/] {action_type}")
-    content_lines.append(f"[bold cyan]DETAILS:[/] {details}")
+    content_lines.append(f"{action_type}")
 
     if result and result.strip():
         content_lines.append("")
@@ -190,7 +186,7 @@ def print_tool(tool_name: str, args: Dict[str, Any], status: str = "call") -> No
         else:
             console.print("()", style="dim")
     elif status == "success":
-        console.print(f"✅ [bold green]Tool Result[/] ([cyan]{tool_name}[/]):", style="bold")
+        console.print(f"[bold green]Tool Result[/] ([cyan]{tool_name}[/]):", style="bold")
     elif status == "error":
         console.print(f"❌ [bold red]Tool Error[/] ([cyan]{tool_name}[/]):", style="bold")
 
@@ -1339,8 +1335,7 @@ Work through this step by step, using the available tools to complete the task."
 
                             if self.verbose:
                                 print_container_action(
-                                    f"Tool: {tool_call.function}",
-                                    f"Args: {json.dumps(tool_call.arguments, indent=2)}",
+                                    f"[bold white]{tool_call.function}([/]{json.dumps(tool_call.arguments)}[bold white])[/]",
                                     tool_result.content,
                                     tool_result.success,
                                 )
@@ -1641,7 +1636,7 @@ async def run_task_example(task_id: str = None, backend: str = "local", traces_d
     # Load the specific task
     try:
         task = task_loader.load_task(task_id, base_config)
-        print(f"✅ Loaded task '{task_id}' from {task.task_folder}")
+        print(f"Loaded task '{task_id}' from {task.task_folder}")
     except Exception as e:
         print(f"❌ Failed to load task '{task_id}': {e}")
         return
