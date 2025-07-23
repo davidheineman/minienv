@@ -235,6 +235,45 @@ def print_final_result(success: bool, score: float, execution_time: float, outpu
             border_style="green" if success else "red"
         ))
 
+
+# =============================================================================
+# TRACE LOGGING
+# =============================================================================
+
+class TraceLogger:
+    """Handles logging of conversation traces to JSONL files."""
+    
+    def __init__(self, traces_dir: str = "traces"):
+        self.traces_dir = Path(traces_dir)
+        self.traces_dir.mkdir(exist_ok=True)
+    
+    def save_trace(self, task_id: str, messages: List['ChatMessage'], metadata: Dict[str, Any] = None) -> str:
+        """Save conversation trace to JSONL file."""
+        timestamp = int(time.time())
+        trace_filename = f"{task_id}_{timestamp}.jsonl"
+        trace_path = self.traces_dir / trace_filename
+        
+        # Convert messages to dict format
+        trace_data = {
+            "task_id": task_id,
+            "timestamp": timestamp,
+            "metadata": metadata or {},
+            "messages": [msg.to_dict() for msg in messages]
+        }
+        
+        # Save as JSONL (one JSON object per line)
+        with open(trace_path, 'w') as f:
+            f.write(json.dumps(trace_data, indent=None, separators=(',', ':')) + '\n')
+        
+        print_docker(f"Trace saved to {trace_path}", "success")
+        return str(trace_path)
+    
+    def load_trace(self, trace_path: str) -> Dict[str, Any]:
+        """Load a trace from JSONL file."""
+        with open(trace_path, 'r') as f:
+            return json.loads(f.readline())
+
+
 # =============================================================================
 # CORE ABSTRACTIONS
 # =============================================================================
@@ -904,6 +943,14 @@ class ToolCall(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     function: str
     arguments: Dict[str, Any]
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert the tool call to a dictionary for serialization."""
+        return {
+            "id": self.id,
+            "function": self.function,
+            "arguments": self.arguments
+        }
 
 
 class ToolResult(BaseModel):
@@ -921,6 +968,16 @@ class ChatMessage(BaseModel):
     tool_calls: List[ToolCall] = Field(default_factory=list)
     tool_call_id: Optional[str] = None
     timestamp: float = Field(default_factory=time.time)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert the message to a dictionary for serialization."""
+        return {
+            "role": self.role,
+            "content": self.content,
+            "tool_calls": [tc.to_dict() for tc in self.tool_calls],
+            "tool_call_id": self.tool_call_id,
+            "timestamp": self.timestamp
+        }
 
 
 class ConversationState(BaseModel):
@@ -1505,10 +1562,11 @@ class OpenAILLMClient:
 class ReActAgent(TaskSolver):
     """ReAct agent implementation similar to PaperBench."""
     
-    def __init__(self, llm_client: Optional[OpenAILLMClient] = None, verbose: bool = True):
+    def __init__(self, llm_client: Optional[OpenAILLMClient] = None, verbose: bool = True, trace_logger: Optional[TraceLogger] = None):
         self.llm_client = llm_client or OpenAILLMClient()
         self.tools: Dict[str, Tool] = {}
         self.verbose = verbose
+        self.trace_logger = trace_logger or TraceLogger()
     
     def add_tool(self, tool: Tool) -> None:
         """Add a tool to the agent."""
@@ -1649,6 +1707,17 @@ Work through this step by step, using the available tools to complete the task."
                             # Check if this was an end_task call
                             if tool_call.function == "end_task":
                                 execution_time = time.time() - start_time
+                                
+                                # Save trace before returning
+                                metadata = {
+                                    "success": True,
+                                    "score": 1.0,
+                                    "execution_time": execution_time,
+                                    "turns": state.current_turn,
+                                    "end_reason": "end_task_called"
+                                }
+                                self.trace_logger.save_trace(task.task_id, state.messages, metadata)
+                                
                                 if self.verbose:
                                     print_final_result(True, 1.0, execution_time, f"Task completed successfully. Tool result: {tool_result.content}")
                                 yield FinalResult(
@@ -1679,6 +1748,17 @@ Work through this step by step, using the available tools to complete the task."
             
             # If we exit the loop without end_task, return final result
             execution_time = time.time() - start_time
+            
+            # Save trace for timeout/limit case
+            metadata = {
+                "success": False,
+                "score": 0.5,
+                "execution_time": execution_time,
+                "turns": state.current_turn,
+                "end_reason": "limits_reached"
+            }
+            self.trace_logger.save_trace(task.task_id, state.messages, metadata)
+            
             if self.verbose:
                 print_final_result(False, 0.5, execution_time, f"Task ended due to limits (turns: {state.current_turn}, time: {execution_time:.1f}s)")
             yield FinalResult(
@@ -1690,6 +1770,18 @@ Work through this step by step, using the available tools to complete the task."
             
         except Exception as e:
             execution_time = time.time() - start_time
+            
+            # Save trace for error case
+            metadata = {
+                "success": False,
+                "score": 0.0,
+                "execution_time": execution_time,
+                "turns": state.current_turn,
+                "end_reason": "error",
+                "error": str(e)
+            }
+            self.trace_logger.save_trace(task.task_id, state.messages, metadata)
+            
             if self.verbose:
                 print_final_result(False, 0.0, execution_time, f"Error during execution: {str(e)}")
             yield FinalResult(
@@ -1829,7 +1921,7 @@ class EvaluationPipeline:
 # UPDATED EXAMPLE USAGE
 # =============================================================================
 
-async def run_task_example(task_id: str = None):
+async def run_task_example(task_id: str = None, traces_dir: str = "traces"):
     """Example using the PaperBench-style ReAct agent with dynamic task loading."""
     
     # Configure base container with Python and common tools
@@ -1870,16 +1962,19 @@ async def run_task_example(task_id: str = None):
     # Create runtime and run ReAct agent
     runtime = ContainerRuntime()
     
+    # Create trace logger
+    trace_logger = TraceLogger(traces_dir)
+    
     # Use ReAct agent
     try:
         openai_client = OpenAILLMClient(model="gpt-4o-mini")
-        react_agent = ReActAgent(llm_client=openai_client, verbose=True)
+        react_agent = ReActAgent(llm_client=openai_client, verbose=True, trace_logger=trace_logger)
     except Exception as e:
         print(f"❌ Failed to initialize OpenAI client: {e}")
         print("Make sure you have OPENAI_API_KEY set in your environment")
         print("Falling back to mock agent...")
         mock_client = MockLLMClient()
-        react_agent = ReActAgent(llm_client=mock_client, verbose=True)
+        react_agent = ReActAgent(llm_client=mock_client, verbose=True, trace_logger=trace_logger)
     
     try:
         results = await runtime.run_task(task, react_agent)
@@ -1913,6 +2008,37 @@ async def list_tasks_example():
             print(f"  • {task_id}: {preview}")
         except Exception as e:
             print(f"  • {task_id}: (error reading instructions: {e})")
+
+
+async def load_and_display_trace(trace_path: str):
+    """Example showing how to load and display a trace file."""
+    trace_logger = TraceLogger()
+    
+    try:
+        trace_data = trace_logger.load_trace(trace_path)
+        
+        print(f"\n=== Trace: {trace_data['task_id']} ===")
+        print(f"Timestamp: {trace_data['timestamp']}")
+        print(f"Metadata: {json.dumps(trace_data['metadata'], indent=2)}")
+        print(f"Total Messages: {len(trace_data['messages'])}")
+        
+        print("\n=== Message History ===")
+        for i, msg in enumerate(trace_data['messages'], 1):
+            print(f"\n[{i}] {msg['role'].upper()}")
+            if msg['content']:
+                content_preview = msg['content'][:200] + ('...' if len(msg['content']) > 200 else '')
+                print(f"Content: {content_preview}")
+            
+            if msg['tool_calls']:
+                print(f"Tool Calls ({len(msg['tool_calls'])}):")
+                for tc in msg['tool_calls']:
+                    print(f"  - {tc['function']}({json.dumps(tc['arguments'])})")
+            
+            if msg['tool_call_id']:
+                print(f"Tool Call ID: {msg['tool_call_id']}")
+                
+    except Exception as e:
+        print(f"❌ Failed to load trace: {e}")
 
 
 

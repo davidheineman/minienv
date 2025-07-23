@@ -7,3 +7,5 @@ test_file.py
 temp_tasks
 *.egg-info
 *.pyc
+beak.yaml
+traces
