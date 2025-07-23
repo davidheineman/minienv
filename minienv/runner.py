@@ -29,6 +29,8 @@ from rich.syntax import Syntax
 from rich.markdown import Markdown
 from rich import box
 
+from minienv.constants import TASKS_DIR
+
 console = Console()
 
 logging.basicConfig(level=logging.WARNING)
@@ -776,7 +778,7 @@ class Task(BaseModel):
 class TaskLoader:
     """Loads tasks from the tasks/ directory structure."""
     
-    def __init__(self, tasks_dir: str = "tasks"):
+    def __init__(self, tasks_dir: str = TASKS_DIR):
         self.tasks_dir = Path(tasks_dir)
     
     def list_tasks(self) -> List[str]:
@@ -1941,12 +1943,9 @@ async def run_task_example(task_id: str = None, traces_dir: str = "traces"):
     if not available_tasks:
         print("❌ No tasks found in tasks/ directory")
         return
-    
-    print(f"Available tasks: {', '.join(available_tasks)}")
-    
-    # Use provided task_id or default to first available task
+
     if task_id not in available_tasks:
-        print(f"❌ Task '{task_id}' not found. Available: {', '.join(available_tasks)}")
+        print(f"Available tasks: {', '.join(available_tasks)}")
         return
     else:
         print(f"Running task: {task_id}")
@@ -2039,6 +2038,3 @@ async def load_and_display_trace(trace_path: str):
                 
     except Exception as e:
         print(f"❌ Failed to load trace: {e}")
-
-
-

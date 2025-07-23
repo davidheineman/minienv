@@ -3,6 +3,7 @@ import string
 import time
 from beaker import Beaker, BeakerDataMount, BeakerEnvVar, BeakerExperimentSpec, BeakerJobPriority, BeakerJob, BeakerWorkloadStatus
 from rich.console import Console
+from minienv.constants import SERVER_DIR, TASKS_DIR
 
 from beaker.types import BeakerDataset
 
@@ -18,7 +19,7 @@ AUS_CLUSTERS = [
     "ai2/ceres-cirrascale",
 ]
 
-ENTRYPOINT = ['bash', '-c', 'python /server/server/main.py']
+ENTRYPOINT = ['bash', '-c', 'python /server/main.py']
 
 def get_rand_suffix(k):
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=k))
@@ -31,8 +32,7 @@ def launch_beaker_job(
     task_mount: BeakerDataset,
     port,
     result_path='/results', 
-    workspace="ai2/davidh",
-) -> BeakerJob:
+    workspace="ai2/davidh") -> BeakerJob:
     beaker = Beaker.from_env()
 
     task_name = f"{name}-" + get_rand_suffix(k=4)
@@ -103,8 +103,7 @@ def create_dataset(
     name: str, 
     description: str,
     source_paths: list[str], 
-    target_dir: str = None
-    ):
+    target_dir: str = None):
     """Create beaker dataset"""
     beaker = Beaker.from_env()
 
@@ -155,77 +154,86 @@ def ping_server(hostname: str, port: int, timeout: int = 300):
     
     return False
 
-def exec_command(command: list[str], hostname: str, port: int) -> str:
-    url = f"http://{hostname}:{port}/exec"
-    headers = {"Content-Type": "application/json"}
-    data = {"command": command}
-    response = requests.post(url, headers=headers, data=json.dumps(data))
-    if response.status_code != 200:
-        raise RuntimeError(f"Command execution failed: {response.status_code} {response.text}")
-    response = response.json()
-    response = response["stdout"]
-    return response
 
-def shutdown_server(hostname: str, port: int) -> bool:
-    url = f"http://{hostname}:{port}/shutdown"
-    response = requests.post(url)
-    if response.status_code != 200:
-        raise RuntimeError(f"Command execution failed: {response.status_code} {response.text}")
-    response = response.json()
-    if response["status"] == "shutting down":
-        return True
-    return False
+class BeakerEnv():
+    def create_env(self, task_name: str, image: str):
+        port = random.randint(1000, 10_000)
+
+        server_dataset = create_dataset(
+            name=f"minienv.{task_name}.server",
+            description='server entrypoint',
+            source_paths=[SERVER_DIR],
+        )
+
+        task_dataset = create_dataset(
+            name=f"minienv.{task_name}.task",
+            description='task files',
+            source_paths=[TASKS_DIR / 'fibonacci'],
+        )
+
+        job: BeakerJob = launch_beaker_job(
+            name=f"minienv.{task_name}",
+            server_mount=server_dataset,
+            task_mount=task_dataset,
+            description=f"A minienv rollout: '{task_name}' on '{image}'",
+            docker_image=image,
+            port = port
+        )
+
+        hostname = get_hostname(job)
+
+        # Wait for server to be ready
+        with console.status("[bold yellow]waiting for server to be ready...", spinner="dots") as status:
+            if not ping_server(hostname=hostname, port=port):
+                console.print("[bold red]server failed to start within timeout![/bold red]")
+                exit(1)
+        console.print("[bold green]server is ready![/bold green]")
+
+        ### you have to be on VPN to do this, but should add private key for extra layer of security. generate private/public key on execution
+
+        self.hostname = hostname
+        self.port = port
+
+    def exec(self, command: list[str]) -> str:
+        url = f"http://{self.hostname}:{self.port}/exec"
+        headers = {"Content-Type": "application/json"}
+        data = {"command": command}
+        response = requests.post(url, headers=headers, data=json.dumps(data))
+        if response.status_code != 200:
+            raise RuntimeError(f"Command execution failed: {response.status_code} {response.text}")
+        response = response.json()
+        stdout = response["stdout"]
+        stderr = response["stderr"]
+        return stdout, stderr
+        
+
+    def teardown(self) -> bool:
+        url = f"http://{self.hostname}:{self.port}/shutdown"
+        response = requests.post(url)
+        if response.status_code != 200:
+            raise RuntimeError(f"Command execution failed: {response.status_code} {response.text}")
+        response = response.json()
+
+        if response["status"] == "shutting down":
+            console.print("[bold green]Teardown successful![/bold green]")
+            return True
+        
+        console.print("[bold red]Job failed to shut down[/bold red]")
+        return False
 
 
+if __name__ == '__main__':
+    env = BeakerEnv()
 
-def create_beaker_env(task_name: str, image: str):
-    port = random.randint(1000, 10_000)
-
-    server_dataset = create_dataset(
-        name=f"minienv.{task_name}.server",
-        description='server entrypoint',
-        source_paths=['server/main.py'],
+    hostname, port = env.create_env(
+        task_name = "fibonacci",
+        image = "python:3.11-slim"
     )
 
-    task_dataset = create_dataset(
-        name=f"minienv.{task_name}.task",
-        description='task files',
-        source_paths=['/Users/dhei/ai2/paperbench/mini-envs/tasks/fibonacci'],
-    )
+    stdout, stderr = env.exec(command=['ls'])
 
-    job: BeakerJob = launch_beaker_job(
-        name=f"minienv.{task_name}",
-        server_mount=server_dataset,
-        task_mount=task_dataset,
-        description=f"A minienv rollout: '{task_name}' on '{image}'",
-        docker_image=image,
-        port = port
-    )
+    print(stdout)
 
-    hostname = get_hostname(job)
+    print(stderr)
 
-    # Wait for server to be ready
-    with console.status("[bold yellow]waiting for server to be ready...", spinner="dots") as status:
-        if not ping_server(hostname=hostname, port=port):
-            console.print("[bold red]server failed to start within timeout![/bold red]")
-            exit(1)
-    console.print("[bold green]server is ready![/bold green]")
-
-    ### you have to be on VPN to do this, but should add private key for extra layer of security. generate private/public key on execution
-
-    return hostname, port
-
-
-hostname, port = create_beaker_env(
-    task_name = "fibonacci",
-    image = "python:3.11-slim"
-)
-
-stdout = exec_command(command=['ls'], hostname=hostname, port=port)
-
-print(stdout)
-
-is_success = shutdown_server(hostname=hostname, port=port)
-
-if is_success:
-    console.print("[bold green]Teardown successful![/bold green]")
+    _ = env.teardown()

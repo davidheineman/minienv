@@ -4,10 +4,8 @@ from minienv.runner import list_tasks_example, run_task_example
 
 
 async def example_usage():
-    """Main example that demonstrates task loading and execution."""
     import sys
     
-    # Check if a specific task was requested
     task_id = None
     if len(sys.argv) > 1:
         task_id = sys.argv[1]
