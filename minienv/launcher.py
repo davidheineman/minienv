@@ -42,7 +42,7 @@ def launch_beaker_job(
     task_mount: BeakerDataset,
     port,
     result_path="/results",
-    workspace="ai2/davidh",
+    workspace="ai2/rollouts",
 ) -> BeakerJob:
     beaker = Beaker.from_env()
 
@@ -79,7 +79,11 @@ def launch_beaker_job(
 
     # Create beaker experiment
     with console.status("[bold yellow]creating beaker experiment...", spinner="dots") as _:
-        workload = beaker.experiment.create(name=task_name, spec=spec, workspace=workspace)
+        workload = beaker.experiment.create(
+            name=task_name, 
+            spec=spec, 
+            workspace=workspace
+        )
 
     # Wait for environment to initalize
     with console.status("[bold yellow]initializing beaker experiment...", spinner="dots") as _:
@@ -228,7 +232,7 @@ class BeakerEnv:
 if __name__ == "__main__":
     env = BeakerEnv()
 
-    hostname, port = env.create_env(task_name="fibonacci", image="python:3.11-slim")
+    env.create_env(task_name="fibonacci", image="python:3.11-slim")
 
     stdout, stderr = env.exec(command=["ls"])
 
