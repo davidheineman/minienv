@@ -1830,7 +1830,7 @@ class ReActAgent(TaskSolver):
         self.add_tool(EndTaskTool())
 
         # Initialize conversation
-        state = ConversationState(max_turns=20, time_limit=task.timeout)
+        state = ConversationState(max_turns=50, time_limit=task.timeout)
 
         # System message
         system_message = ChatMessage(
