@@ -1,4 +1,5 @@
 import json
+import os
 import random
 import string
 import time
@@ -174,6 +175,7 @@ class BeakerBackend(Backend):
         
     async def create_env(self, task_name: str, image: str, **kwargs) -> None:
         port = random.randint(1000, 10_000)
+        existing_task_folder = kwargs.get('existing_task_folder')
 
         server_dataset = create_dataset(
             name=f"minienv.{task_name}.server",
@@ -181,10 +183,17 @@ class BeakerBackend(Backend):
             source_paths=[SERVER_DIR],
         )
 
+        # Use existing task folder if provided, otherwise use default task directory
+        if existing_task_folder and os.path.exists(existing_task_folder):
+            task_source_paths = [existing_task_folder]
+        else:
+            # Fallback to specific task directory
+            task_source_paths = [TASKS_DIR / task_name]
+
         task_dataset = create_dataset(
             name=f"minienv.{task_name}.task",
             description="task files",
-            source_paths=[TASKS_DIR / "fibonacci"],
+            source_paths=task_source_paths,
         )
 
         job: BeakerJob = launch_beaker_job(

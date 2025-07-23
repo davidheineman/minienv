@@ -1483,20 +1483,24 @@ class ContainerRuntime:
 
     @asynccontextmanager
     async def create_computer(
-        self, config: ContainerConfig
+        self, config: ContainerConfig, backend_type: str = "local"
     ) -> AsyncGenerator[ComputerInterface, None]:
         """Create and manage a computer interface for the given configuration."""
-        # Create local backend with config parameters
-        backend = LocalBackend(
-            environment=config.environment or {"PYTHONUNBUFFERED": "1"},
-            volumes=config.volumes or {},
-            ports=config.ports or [],
-            privileged=config.privileged,
-            gpu_access=config.gpu_access,
-            memory_limit=config.memory_limit,
-            timeout=config.timeout,
-            results_host_path=config.results_host_path
-        )
+        # Create backend based on type
+        if backend_type == "beaker":
+            from minienv.backend.beaker import BeakerBackend
+            backend = BeakerBackend()
+        else:  # default to local
+            backend = LocalBackend(
+                environment=config.environment or {"PYTHONUNBUFFERED": "1"},
+                volumes=config.volumes or {},
+                ports=config.ports or [],
+                privileged=config.privileged,
+                gpu_access=config.gpu_access,
+                memory_limit=config.memory_limit,
+                timeout=config.timeout,
+                results_host_path=config.results_host_path
+            )
 
         try:
             # Create interface using the backend adapter
@@ -1512,12 +1516,12 @@ class ContainerRuntime:
             await backend.teardown()
             raise e
 
-    async def run_task(self, task: Task, solver: TaskSolver) -> List[Union[Step, FinalResult]]:
+    async def run_task(self, task: Task, solver: TaskSolver, backend_type: str = "local") -> List[Union[Step, FinalResult]]:
         """Run a task with the given solver."""
         results = []
 
         try:
-            async with self.create_computer(task.config) as computer:
+            async with self.create_computer(task.config, backend_type) as computer:
                 logger.info(f"Running task {task.task_id}")
 
                 # Initialize the backend environment with task info and existing task folder
@@ -1610,7 +1614,7 @@ class EvaluationPipeline:
 # =============================================================================
 
 
-async def run_task_example(task_id: str = None, traces_dir: str = "traces"):
+async def run_task_example(task_id: str = None, backend: str = "local", traces_dir: str = "traces"):
     """Example using the PaperBench-style ReAct agent with dynamic task loading."""
 
     # Configure base container with Python and common tools
@@ -1660,7 +1664,7 @@ async def run_task_example(task_id: str = None, traces_dir: str = "traces"):
         react_agent = ReActAgent(llm_client=mock_client, verbose=True, trace_logger=trace_logger)
 
     try:
-        results = await runtime.run_task(task, react_agent)
+        results = await runtime.run_task(task, react_agent, backend_type=backend)
 
         print(f"=== Task '{task_id}' Results ===")
         for result in results:

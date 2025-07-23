@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-minienv = "minienv.cli:main"
+minienv = "minienv.cli:cli_main"
 
 [project.optional-dependencies]
 dev = [

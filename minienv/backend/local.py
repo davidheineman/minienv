@@ -209,8 +209,13 @@ class DockerContainer:
                 tarinfo.size = len(content)
                 tarinfo.mode = 0o644
                 
-                # Add file to tar
-                tar.addfile(tarinfo, fileobj=tempfile.NamedTemporaryFile(mode='w+b'))
+                # Create a temporary file with the content
+                with tempfile.NamedTemporaryFile(mode='w+b') as content_file:
+                    content_file.write(content)
+                    content_file.seek(0)
+                    
+                    # Add file to tar
+                    tar.addfile(tarinfo, fileobj=content_file)
                 
             tmp_tar.seek(0)
             
