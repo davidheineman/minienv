@@ -148,7 +148,7 @@ def get_hostname(job: BeakerJob):
     return hostname
 
 
-def ping_server(hostname: str, port: int, timeout: int = 300):
+def ping_server(hostname: str, port: int, timeout: int = 20):
     """Ping server until it responds or timeout is reached"""
     url = f"http://{hostname}:{port}/ping"
     start_time = time.time()
@@ -174,8 +174,7 @@ class BeakerBackend(Backend):
         self.port: int = None
         
     async def create_env(self, task_name: str, image: str, **kwargs) -> None:
-        port = random.randint(1000, 10_000)
-        existing_task_folder = kwargs.get('existing_task_folder')
+        port = random.randint(1_000, 10_000)
 
         server_dataset = create_dataset(
             name=f"minienv.{task_name}.server",
@@ -183,7 +182,8 @@ class BeakerBackend(Backend):
             source_paths=[SERVER_DIR],
         )
 
-        # Use existing task folder if provided, otherwise use default task directory
+        # @davidh -- cursor added this. I'm not sure what it does
+        existing_task_folder = kwargs.get('existing_task_folder')
         if existing_task_folder and os.path.exists(existing_task_folder):
             task_source_paths = [existing_task_folder]
         else:
