@@ -16,6 +16,7 @@ from beaker import (
 from beaker.types import BeakerDataset
 from rich.console import Console
 
+from minienv import Backend
 from minienv.constants import SERVER_DIR, TASKS_DIR
 
 console = Console()
@@ -163,8 +164,15 @@ def ping_server(hostname: str, port: int, timeout: int = 300):
     return False
 
 
-class BeakerEnv:
-    def create_env(self, task_name: str, image: str):
+class BeakerBackend(Backend):
+    """Beaker backend implementation."""
+    
+    def __init__(self, workspace: str = "ai2/rollouts"):
+        self.workspace = workspace
+        self.hostname: str = None
+        self.port: int = None
+        
+    async def create_env(self, task_name: str, image: str, **kwargs) -> None:
         port = random.randint(1000, 10_000)
 
         server_dataset = create_dataset(
@@ -186,6 +194,7 @@ class BeakerEnv:
             description=f"A minienv rollout: '{task_name}' on '{image}'",
             docker_image=image,
             port=port,
+            workspace=self.workspace,
         )
 
         hostname = get_hostname(job)
@@ -202,9 +211,10 @@ class BeakerEnv:
         self.hostname = hostname
         self.port = port
 
-    def exec(self, command: list[str]) -> str:
+    async def exec_command(self, command: list[str], timeout: int = 60) -> tuple[str, str, int]:
         url = f"http://{self.hostname}:{self.port}/exec"
         headers = {"Content-Type": "application/json"}
+        # Convert single command string to list format expected by server
         data = {"command": command}
         response = requests.post(url, headers=headers, data=json.dumps(data))
         if response.status_code != 200:
@@ -212,9 +222,38 @@ class BeakerEnv:
         response = response.json()
         stdout = response["stdout"]
         stderr = response["stderr"]
-        return stdout, stderr
+        exit_code = response.get("exit_code", 0)  # Assume success if not provided
+        return stdout, stderr, exit_code
 
-    def teardown(self) -> bool:
+    async def upload_file(self, content: bytes, destination: str) -> None:
+        """Upload file content to the environment via HTTP API."""
+        url = f"http://{self.hostname}:{self.port}/upload"
+        headers = {"Content-Type": "application/json"}
+        # Encode content as base64 for JSON transport
+        import base64
+        data = {
+            "destination": destination,
+            "content": base64.b64encode(content).decode('utf-8')
+        }
+        response = requests.post(url, headers=headers, data=json.dumps(data))
+        if response.status_code != 200:
+            raise RuntimeError(f"File upload failed: {response.status_code} {response.text}")
+
+    async def download_file(self, source: str) -> bytes:
+        """Download file content from the environment via HTTP API."""
+        url = f"http://{self.hostname}:{self.port}/download"
+        headers = {"Content-Type": "application/json"}
+        data = {"source": source}
+        response = requests.post(url, headers=headers, data=json.dumps(data))
+        if response.status_code != 200:
+            raise RuntimeError(f"File download failed: {response.status_code} {response.text}")
+        
+        response_data = response.json()
+        # Decode base64 content
+        import base64
+        return base64.b64decode(response_data["content"])
+
+    async def teardown(self) -> bool:
         url = f"http://{self.hostname}:{self.port}/shutdown"
         response = requests.post(url)
         if response.status_code != 200:
@@ -230,14 +269,20 @@ class BeakerEnv:
 
 
 if __name__ == "__main__":
-    env = BeakerEnv()
+    import asyncio
+    
+    async def main():
+        backend = BeakerBackend()
 
-    env.create_env(task_name="fibonacci", image="python:3.11-slim")
+        await backend.create_env(task_name="fibonacci", image="python:3.11-slim")
 
-    stdout, stderr = env.exec(command=["ls"])
+        stdout, stderr, exit_code = await backend.exec_command(["ls"], timeout=10)
 
-    print(stdout)
+        print(f"stdout: {stdout}")
+        print(f"stderr: {stderr}")
+        print(f"exit_code: {exit_code}")
 
-    print(stderr)
-
-    _ = env.teardown()
+        success = await backend.teardown()
+        print(f"Teardown successful: {success}")
+    
+    asyncio.run(main())
