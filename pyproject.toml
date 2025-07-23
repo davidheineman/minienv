@@ -90,6 +90,7 @@ exclude = [
     "doc",
     "pretrain_data",
     "inference",
+    "preparedness/",
 ]
 
 [tool.ruff.lint.per-file-ignores]
