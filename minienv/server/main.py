@@ -24,7 +24,8 @@ class ExecHandler(http.server.BaseHTTPRequestHandler):
             try:
                 data = json.loads(post_data.decode("utf-8"))
                 command = data.get("command", [])
-                result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+                timeout = data.get("timeout", 90)
+                result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
                 response = {
                     "stdout": result.stdout,
                     "stderr": result.stderr,

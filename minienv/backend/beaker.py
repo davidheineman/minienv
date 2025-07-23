@@ -224,8 +224,11 @@ class BeakerBackend(Backend):
         url = f"http://{self.hostname}:{self.port}/exec"
         headers = {"Content-Type": "application/json"}
         # Convert single command string to list format expected by server
-        data = {"command": command}
-        response = requests.post(url, headers=headers, data=json.dumps(data))
+        data = {"command": command, "timeout": timeout}
+        
+        with console.status(f"[bold yellow]executing command: {' '.join(command)}...", spinner="dots") as _:
+            response = requests.post(url, headers=headers, data=json.dumps(data), timeout=timeout + 10)
+        
         if response.status_code != 200:
             raise RuntimeError(f"Command execution failed: {response.status_code} {response.text}")
         response = response.json()
