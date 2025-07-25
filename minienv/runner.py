@@ -648,7 +648,25 @@ class ConversationState(BaseModel):
 
     def get_recent_context(self, max_messages: int = 20) -> List[ChatMessage]:
         """Get recent messages for context management."""
-        return self.messages[-max_messages:] if len(self.messages) > max_messages else self.messages
+        if len(self.messages) <= max_messages:
+            return self.messages
+            
+        # Get the last max_messages, but ensure we don't break tool call/tool result pairs
+        recent_messages = self.messages[-max_messages:]
+        
+        # If the first message is a tool message, we need to include its corresponding assistant message
+        if recent_messages and recent_messages[0].role == "tool":
+            # Find the corresponding assistant message with tool calls
+            tool_call_id = recent_messages[0].tool_call_id
+            for i in range(len(self.messages) - max_messages - 1, -1, -1):
+                if (self.messages[i].role == "assistant" and 
+                    any(tc.id == tool_call_id for tc in self.messages[i].tool_calls)):
+                    # Include this assistant message and everything after it
+                    return self.messages[i:]
+            # If we can't find the corresponding assistant message, just return recent messages
+            # The _messages_to_openai_format will handle orphaned tool messages
+        
+        return recent_messages
 
 
 class Tool(ABC):
@@ -1719,8 +1737,11 @@ class OpenAILLMClient:
     def _messages_to_openai_format(self, messages: List[ChatMessage]) -> List[Dict[str, Any]]:
         """Convert internal messages to OpenAI format."""
         openai_messages = []
-
-        for msg in messages:
+        
+        # Track tool calls to ensure proper pairing
+        pending_tool_calls = {}  # tool_call_id -> tool_call_info
+        
+        for i, msg in enumerate(messages):
             if msg.role == "system":
                 openai_messages.append({"role": "system", "content": msg.content})
             elif msg.role == "user":
@@ -1739,11 +1760,25 @@ class OpenAILLMClient:
                         }
                         for tc in msg.tool_calls
                     ]
+                    # Track these tool calls
+                    for tc in msg.tool_calls:
+                        pending_tool_calls[tc.id] = {
+                            "function": tc.function,
+                            "arguments": tc.arguments
+                        }
                 openai_messages.append(openai_msg)
             elif msg.role == "tool":
-                openai_messages.append(
-                    {"role": "tool", "tool_call_id": msg.tool_call_id, "content": msg.content}
-                )
+                # Only add tool messages if we have the corresponding tool call
+                if msg.tool_call_id in pending_tool_calls:
+                    openai_messages.append(
+                        {"role": "tool", "tool_call_id": msg.tool_call_id, "content": msg.content}
+                    )
+                    # Remove from pending since it's been handled
+                    del pending_tool_calls[msg.tool_call_id]
+                else:
+                    # Skip orphaned tool messages that don't have corresponding tool calls
+                    # This can happen when context is truncated
+                    continue
 
         return openai_messages
 
