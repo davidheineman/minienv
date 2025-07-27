@@ -1,8 +1,9 @@
-A docker service for LLM environments. Each rollout has access to its own container.
+A docker service for LLM environments. Works locally with Docker or remote with Beaker.
 
 ### Setup
 
 ```sh
+git clone https://github.com/davidheineman/minienv
 pip install -e ".[all]"
 
 # Ensure you daemon is summoned
