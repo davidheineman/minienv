@@ -4,11 +4,12 @@ Simple launcher using BeakerBackend.
 """
 import asyncio
 from minienv.backend.beaker import BeakerBackend
+from minienv.constants import TASKS_DIR
 
 async def main():
     backend = BeakerBackend()
 
-    await backend.create_env(task_name="fibonacci", image="python:3.11-slim")
+    await backend.create_env(task_name="fibonacci", image="python:3.11-slim", task_files = [TASKS_DIR / "fibonacci"])
 
     stdout, stderr, exit_code = await backend.exec_command("ls")
 

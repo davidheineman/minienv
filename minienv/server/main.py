@@ -6,6 +6,7 @@ import subprocess
 import threading
 import base64
 
+
 class ExecHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/ping":
@@ -23,14 +24,32 @@ class ExecHandler(http.server.BaseHTTPRequestHandler):
             post_data = self.rfile.read(content_length)
             try:
                 data = json.loads(post_data.decode("utf-8"))
-                command = data.get("command", [])
-                timeout = data.get("timeout", 90)
-                result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+
+                if "command" not in data:
+                    raise RuntimeError("Missing 'command' in request data")
+                
+                command = data["command"]
+                cwd     = data.get("cwd", None)
+                timeout = data.get("timeout", 30)
+
+                result = subprocess.run(
+                    args=command, 
+                    text=True,
+                    timeout=timeout,
+                    encoding="utf-8",
+                    errors="replace",
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    cwd=cwd,
+                    shell=True
+                )
+
                 response = {
                     "stdout": result.stdout,
                     "stderr": result.stderr,
                     "exit_code": result.returncode,
                 }
+
                 self.send_response(200)
                 self.send_header("Content-type", "application/json")
                 self.end_headers()
@@ -94,6 +113,7 @@ class ExecHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
+
 def main():
     port_env = os.environ.get("MINIENV_PORT")
     if port_env is None:
@@ -106,6 +126,7 @@ def main():
     with socketserver.TCPServer(("", port), ExecHandler) as httpd:
         print(f"Server running on port {port}")
         httpd.serve_forever()
+
 
 if __name__ == "__main__":
     main()

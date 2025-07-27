@@ -1,8 +1,10 @@
 import json
 import os
 import random
+import shlex
 import string
 import time
+from typing import Optional
 
 import requests
 from beaker import (
@@ -17,10 +19,25 @@ from beaker import (
 from beaker.types import BeakerDataset
 from rich.console import Console
 
-from . import Backend
-from minienv.constants import SERVER_DIR, TASKS_DIR
+from minienv.backend import Backend
+from minienv.constants import SERVER_DIR
 
-console = Console()
+# console = Console()
+# console = Console(file=open(os.devnull, "w")) # disable rich entirely
+
+class SilentConsole:
+    def __getattr__(self, _):
+        def noop(*args, **kwargs):
+            return self
+        return noop
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+console = SilentConsole()
 
 AUS_CLUSTERS = [
     "ai2/saturn-cirrascale",
@@ -43,12 +60,32 @@ def launch_beaker_job(
     server_mount: BeakerDataset,
     task_mount: BeakerDataset,
     port,
+    env_vars: dict[str, str] = {},
     result_path="/results",
     workspace="ai2/rollouts",
 ) -> BeakerJob:
     beaker = Beaker.from_env()
 
     task_name = f"{name}-" + get_rand_suffix(k=4)
+
+    beaker_env_vars = [
+        BeakerEnvVar(name=key, value=str(value)) for key, value in env_vars.items()
+    ]
+
+    # Add server code
+    datasets = [
+        BeakerDataMount.new(
+            beaker=server_mount.id,
+            mount_path="/server",
+        )
+    ]
+
+    # Add task-specific files
+    if task_mount is not None:
+        datasets += [BeakerDataMount.new(
+            beaker=task_mount.id,
+            mount_path="/task",
+        )]
 
     spec = BeakerExperimentSpec.new(
         task_name=task_name,
@@ -59,20 +96,11 @@ def launch_beaker_job(
         budget="ai2/oe-eval",
         cluster=AUS_CLUSTERS,
         result_path=result_path,
-        datasets=[
-            BeakerDataMount.new(
-                beaker=server_mount.id,
-                mount_path="/server",
-            ),
-            BeakerDataMount.new(
-                beaker=task_mount.id,
-                mount_path="/task",
-            ),
-        ],
+        datasets=datasets,
         env_vars=[
             BeakerEnvVar(name="PYTHONUNBUFFERED", value=str(1)),
             BeakerEnvVar(name="MINIENV_PORT", value=str(port)),
-        ],
+        ] + beaker_env_vars,
         command=ENTRYPOINT,
         # @davidh -- Careful with networking
         host_networking=True,
@@ -138,7 +166,7 @@ def create_dataset(name: str, description: str, source_paths: list[str], target_
     # Print uploaded files
     files = list(beaker.dataset.list_files(dataset))
     for file in files:
-        print(f" - {file.path} ({file.size} bytes)")
+        console.print(f" - {file.path} ({file.size} bytes)")
 
     return dataset
 
@@ -176,7 +204,13 @@ class BeakerBackend(Backend):
         self.hostname: str = None
         self.port: int = None
         
-    async def create_env(self, task_name: str, image: str, **kwargs) -> None:
+    async def create_env(
+        self, 
+        task_name: str, 
+        image: str, 
+        task_files: Optional[list[str]] = None, 
+        env_vars: Optional[dict[str, str]] = None
+    ) -> None:
         port = random.randint(1_000, 10_000)
 
         server_dataset = create_dataset(
@@ -185,19 +219,14 @@ class BeakerBackend(Backend):
             source_paths=[SERVER_DIR],
         )
 
-        # @davidh -- cursor added this. I'm not sure what it does
-        existing_task_folder = kwargs.get('existing_task_folder')
-        if existing_task_folder and os.path.exists(existing_task_folder):
-            task_source_paths = [existing_task_folder]
-        else:
-            # Fallback to specific task directory
-            task_source_paths = [TASKS_DIR / task_name]
-
-        task_dataset = create_dataset(
-            name=f"minienv.{task_name}.task",
-            description="task files",
-            source_paths=task_source_paths,
-        )
+        # Upload task-specific files
+        task_dataset = None
+        if task_files is not None:
+            task_dataset = create_dataset(
+                name=f"minienv.{task_name}.task",
+                description="task files",
+                source_paths=task_files,
+            )
 
         job: BeakerJob = launch_beaker_job(
             name=f"minienv.{task_name}",
@@ -206,6 +235,7 @@ class BeakerBackend(Backend):
             description=f"A minienv rollout: '{task_name}' on '{image}'",
             docker_image=image,
             port=port,
+            env_vars=env_vars,
             workspace=self.workspace,
         )
 
@@ -223,21 +253,38 @@ class BeakerBackend(Backend):
         self.hostname = hostname
         self.port = port
 
-    async def exec_command(self, command: list[str], timeout: int = 60) -> tuple[str, str, int]:
+    async def exec_command(self, command: list[str], timeout: int = 60, cwd: str = None) -> tuple[str, str, int]:
         url = f"http://{self.hostname}:{self.port}/exec"
         headers = {"Content-Type": "application/json"}
-        # Convert single command string to list format expected by server
-        data = {"command": command, "timeout": timeout}
+
+        payload = {
+            "command": command, 
+            "timeout": timeout
+        }
+
+        if cwd is not None:
+            payload["cwd"] = cwd
+                
+        if isinstance(command, list):
+            command = shlex.join(command)
         
-        with console.status(f"[bold yellow]executing command: {' '.join(command)}...", spinner="dots") as _:
-            response = requests.post(url, headers=headers, data=json.dumps(data), timeout=timeout + 10)
+        with console.status(f"[bold yellow]executing command: {command}...", spinner="dots") as _:
+            response = requests.post(
+                url, 
+                headers=headers, 
+                data=json.dumps(payload), 
+                timeout=timeout + 10
+            )
         
         if response.status_code != 200:
             raise RuntimeError(f"Command execution failed: {response.status_code} {response.text}")
-        response = response.json()
-        stdout = response["stdout"]
-        stderr = response["stderr"]
-        exit_code = response.get("exit_code", 0)  # Assume success if not provided
+
+        response  = response.json()
+
+        stdout    = response["stdout"]
+        stderr    = response["stderr"]
+        exit_code = response["exit_code"]
+
         return stdout, stderr, exit_code
 
     async def upload_file(self, content: bytes, destination: str) -> None:
@@ -271,8 +318,11 @@ class BeakerBackend(Backend):
     async def teardown(self) -> bool:
         url = f"http://{self.hostname}:{self.port}/shutdown"
         response = requests.post(url)
+        
         if response.status_code != 200:
-            raise RuntimeError(f"Command execution failed: {response.status_code} {response.text}")
+            console.print(f"[bold red]Job failed to shut down. Response:[/bold red] {response}")
+            return False
+        
         response = response.json()
 
         if response["status"] == "shutting down":
