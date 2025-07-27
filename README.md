@@ -52,7 +52,5 @@ pip install mini-swe-agent
 python minienv/examples/swebench/swebench_single.py -i sqlfluff__sqlfluff-1625
 
 # For full SWE bench, use their repo
-python src/minisweagent/run/extra/swebench.py -w 30 --redo-existing
+python minienv/examples/swebench/swebench.py -w 30
 ```
-
-<!-- python src/minisweagent/run/extra/swebench_single.py -i sqlfluff__sqlfluff-1625 -->
