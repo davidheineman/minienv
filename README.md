@@ -54,7 +54,7 @@ Example of `minienv` on SWE Bench:
 
 ```sh
 # Run a single instance with mini SWE agent!
-pip install mini-swe-agent
+pip install -e ".[swebench]"
 python minienv/examples/swebench/swebench_single.py -i sqlfluff__sqlfluff-1625
 
 # For full SWE bench, use their repo

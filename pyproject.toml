@@ -7,7 +7,6 @@ name = "minienv"
 version = "0.0.1"
 requires-python = ">=3.10"
 dependencies = [
-    "docker",
     "rich",
     "openai", # TODO: replace with litellm
     "pydantic",
@@ -28,9 +27,15 @@ dev = [
 beaker = [
     "beaker-py>=2.0", 
     "GitPython>=3.0,<4.0",
-    # "beaker-gantry>=3.0.0rc1"
 ]
-all = ["minienv[dev,beaker]"]
+docker = [
+    "docker",
+]
+swebench = [
+    "mini-swe-agent",
+    "datasets"
+]
+all = ["minienv[dev,beaker,docker,swebench]"]
 
 [tool.setuptools]
 include-package-data = true
