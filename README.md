@@ -31,11 +31,17 @@ You can use `minienv` as a backend in Python:
 ```python
 from minienv.backend import BeakerBackend
 
-backend = BeakerBackend("ai2/rollouts")
+backend = BeakerBackend(
+    workspace="ai2/rollouts"
+)
 
-await backend.create_env(task_name="test-task", image="python:3.11-slim")
+await backend.create_env(
+    task_name="test-task", 
+    image="python:3.11-slim"
+)
 
-stdout, stderr, exit_code = await backend.exec_command(["ls"], timeout=10)
+stdout, stderr, exit_code = \
+    await backend.exec_command("ls", timeout=10)
 
 print(stdout)
 
