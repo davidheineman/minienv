@@ -22,10 +22,8 @@ from rich.console import Console
 from minienv.backend import Backend
 from minienv.constants import SERVER_DIR
 
-# console = Console()
-# console = Console(file=open(os.devnull, "w")) # disable rich entirely
-
 class SilentConsole:
+    """ A mock version of rich.console """
     def __getattr__(self, _):
         def noop(*args, **kwargs):
             return self
@@ -37,6 +35,7 @@ class SilentConsole:
     def __exit__(self, *args):
         pass
 
+# console = Console()
 console = SilentConsole()
 
 AUS_CLUSTERS = [
@@ -209,7 +208,7 @@ class BeakerBackend(Backend):
         task_name: str, 
         image: str, 
         task_files: Optional[list[str]] = None, 
-        env_vars: Optional[dict[str, str]] = None
+        env_vars: dict[str, str] = {}
     ) -> None:
         port = random.randint(1_000, 10_000)
 
@@ -255,8 +254,11 @@ class BeakerBackend(Backend):
 
     async def exec_command(self, command: list[str], timeout: int = 60, cwd: str = None) -> tuple[str, str, int]:
         url = f"http://{self.hostname}:{self.port}/exec"
+        
+        if self.hostname is None or self.port is None:
+            raise RuntimeError(f'Backend not intialized: {url}')
+        
         headers = {"Content-Type": "application/json"}
-
         payload = {
             "command": command, 
             "timeout": timeout
@@ -316,6 +318,10 @@ class BeakerBackend(Backend):
         return base64.b64decode(response_data["content"])
 
     async def teardown(self) -> bool:
+        if self.hostname is None or self.port is None:
+            # if a backend was never initialized, return
+            return
+
         url = f"http://{self.hostname}:{self.port}/shutdown"
         response = requests.post(url)
         

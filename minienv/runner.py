@@ -2147,7 +2147,7 @@ class ContainerRuntime:
                 await computer.backend.create_env(
                     task_name=task.task_id, 
                     image=task.config.image,
-                    existing_task_folder=task.task_folder
+                    task_files=[task.task_folder]
                 )
 
                 async for result in solver.solve(task, computer):
