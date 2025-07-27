@@ -61,3 +61,5 @@ python minienv/examples/swebench/swebench_single.py -i sqlfluff__sqlfluff-1625
 # For full SWE bench, use their repo
 python minienv/examples/swebench/swebench.py -w 30
 ```
+
+<img width="600" alt="demo" src="https://github.com/user-attachments/assets/05c98fe8-2143-485d-bcb7-85204104b608" />
