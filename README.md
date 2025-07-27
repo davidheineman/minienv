@@ -62,4 +62,6 @@ python minienv/examples/swebench/swebench_single.py -i sqlfluff__sqlfluff-1625
 python minienv/examples/swebench/swebench.py -w 30
 ```
 
-<img width="600" alt="demo" src="https://github.com/user-attachments/assets/05c98fe8-2143-485d-bcb7-85204104b608" />
+<img width="650" alt="example" src="https://github.com/user-attachments/assets/2a1466d6-7d15-4ed1-b229-9ef914d5a4e8" />
+
+
