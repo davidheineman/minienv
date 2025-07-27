@@ -12,7 +12,7 @@ docker run hello-world
 
 ### CLI Usage
 
-Here's an example with a demo `fibonacci` task:
+`minienv` has a built-in CLI agent. Here's demo [`fibonacci`](./tasks/fibonacci/) and [`fre`](./tasks/fre/) (PaperBench) tasks:
 
 ```sh
 # Show some example tasks
@@ -23,11 +23,15 @@ minienv fibonacci
 
 # Run with beaker backend
 minienv fibonacci -b beaker
+
+# Run an example from PaperBench
+minienv fre
+minienv fre -b beaker
 ```
 
 ### Python Usage
 
-You can use `minienv` as a backend in Python:
+`minienv` can be used as a backend in Python:
 
 ```python
 from minienv.backend import BeakerBackend

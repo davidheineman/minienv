@@ -428,7 +428,7 @@ class TaskLoader:
 
         tasks = []
         for item in self.tasks_dir.iterdir():
-            if item.is_dir() and (item / "instructions.md").exists():
+            if item.is_dir():
                 tasks.append(item.name)
         return tasks
 
