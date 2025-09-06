@@ -86,10 +86,20 @@ def launch_beaker_job(
             mount_path="/task",
         )]
 
+    if '/' in docker_image:
+        # this is a beaker image
+        docker_image = None
+        beaker_image = docker_image
+    else:
+        # this is a docker image
+        beaker_image = None
+        docker_image = docker_image
+
     spec = BeakerExperimentSpec.new(
         task_name=task_name,
         description=description,
         docker_image=docker_image,
+        beaker_image=beaker_image,
         priority=BeakerJobPriority.normal,
         preemptible=True,
         budget="ai2/oe-eval",
