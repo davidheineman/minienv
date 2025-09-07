@@ -42,6 +42,11 @@ swebench = [
     "mini-swe-agent",
     "datasets"
 ]
+tbench = [
+    "terminal-bench",
+    "paramiko",
+    "tenacity",
+]
 all = ["minienv[dev,beaker,docker,swebench]"]
 
 [tool.setuptools]

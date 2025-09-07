@@ -6,11 +6,10 @@ import subprocess
 import logging
 from pathlib import Path
 import docker
-
-import subprocess
+import multiprocessing
+from multiprocessing import Pool, cpu_count
+from functools import partial
 from typing import Optional
-import logging
-import subprocess
 
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s\t%(message)s")
@@ -202,6 +201,16 @@ def get_image_name(task_id):
     return f"tb__{task_id}__client"
 
 
+def build_task_wrapper(task_id, tasks_dir, workspace, force_rebuild):
+    """Wrapper function for multiprocessing that handles exceptions and logging."""
+    try:
+        compose_file = f"{tasks_dir}/{task_id}/docker-compose.yaml"
+        return build_task(compose_file, task_id, workspace, force_rebuild)
+    except Exception as e:
+        # Return the error message instead of raising
+        return str(e)
+
+
 def build_task(compose_file, task_id, workspace, force_rebuild):
     # Check if image already exists on Beaker
     pusher = BeakerImagePusher(workspace)
@@ -242,17 +251,33 @@ def build_task(compose_file, task_id, workspace, force_rebuild):
 
 
 def build_tasks(tasks, tasks_dir, workspace, force_rebuild):
+    """Build tasks using a process pool with 20 workers."""
+    # Create a partial function with fixed arguments
+    build_task_with_args = partial(
+        build_task_wrapper, 
+        tasks_dir=tasks_dir, 
+        workspace=workspace, 
+        force_rebuild=force_rebuild
+    )
+    
+    # Use process pool with 20 workers
+    max_workers = min(20, len(tasks))
+    logger.info(f"Building {len(tasks)} tasks using {max_workers} parallel workers")
+    
     failed_tasks = []
-    for task_id in tasks:
-        logger.info(f"Building task: {task_id}")
-
-        try:
-            compose_file = f"{tasks_dir}/{task_id}/docker-compose.yaml"
-            build_task(compose_file, task_id, workspace, force_rebuild)
-
-        except Exception as e:
-            logger.error(f"\033[31mFailed to build task {task_id}: {e}\033[0m")
-            failed_tasks.append(task_id)
+    with Pool(processes=max_workers) as pool:
+        # Map tasks to the process pool
+        results = pool.map(build_task_with_args, tasks)
+        
+        # Process results
+        for task_id, result in zip(tasks, results):
+            if result is None:
+                # Success
+                logger.info(f"Successfully built task: {task_id}")
+            else:
+                # Failure - result contains the error message
+                logger.error(f"\033[31mFailed to build task {task_id}: {result}\033[0m")
+                failed_tasks.append(task_id)
 
     return failed_tasks
 
@@ -288,6 +313,8 @@ def main(tasks, tasks_dir, workspace, force_rebuild):
 
 
 if __name__ == "__main__":
+    multiprocessing.set_start_method('spawn', force=True)
+    
     parser = argparse.ArgumentParser(description="Build and push T-Bench tasks")
     parser.add_argument("--task", type=str, help="Specific task to build")
     parser.add_argument(

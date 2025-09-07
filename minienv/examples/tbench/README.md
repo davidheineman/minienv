@@ -1,25 +1,37 @@
 ### setup
 
 ```sh
-pip install terminal-bench
-pip install minienv
-pip install paramiko tenacity
+pip install "minienv[beaker,dev,docker,tbench]"
 ```
+
+<details>
+<summary>local install</summary>
+
+```sh
+git clone https://github.com/davidheineman/minienv.git
+cd minienv
+pip install -e ".[beaker,dev,docker,tbench]"
+```
+
+</details>
+
 
 ### usage
 
 ```sh
-# 1. Download tasks
-python -m terminal_bench.cli.tb.datasets download --dataset terminal-bench-core==head
+# List datasets
+tb datasets list
 
-# (optional) specify an individual task
-TASK_ID=hello-world
+# Download tasks
+tb datasets download --dataset terminal-bench-core==head
 
-# 2. Build images
-python build_images.py --task $TASK_ID
+# Build images
+python minienv/examples/tbench/build_images.py \
+    --tasks-dir /root/.cache/terminal-bench/terminal-bench-core/head
 
-# 3. Evaluate task
-python tb.py run \
+# Evaluate task
+alias minitb="python minienv/examples/tbench/tb.py"
+minitb run \
     --task-id $TASK_ID \
     --agent claude-code \
     --model claude-sonnet-4-20250514 \
@@ -31,5 +43,6 @@ python tb.py run \
 - [ ] add from docker compose:
     - [ ] volume mounts
     - [ ] environment keys
+    - [ ] arbitrary docker compose builds, with failures on unsupported configs
 - [ ] there's an issue with image names including ".": `install-windows-3.11`
-- [ ] some tasks (`tasks/security-celery-redis-rce`) use fancy docker-compose features that we can't support
+- [ ] some tasks (`tasks/security-celery-redis-rce`) use fancy docker-compose features that we can't easily support
