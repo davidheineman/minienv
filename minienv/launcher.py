@@ -1,7 +1,3 @@
-#!/usr/bin/env python3
-"""
-Simple launcher using BeakerBackend.
-"""
 import asyncio
 from minienv.backend.beaker import BeakerBackend
 from minienv.constants import TASKS_DIR

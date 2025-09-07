@@ -13,3 +13,4 @@ traces
 .ruff_cache
 arch.md
 workspace
+dev.sh

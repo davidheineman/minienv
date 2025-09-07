@@ -1,8 +1,3 @@
-import asyncio
-import tempfile
-from pathlib import Path
-from typing import Optional
-
 from minienv.runner import ComputerInterface, ExecutionResult, JupyterExecutionResult
 from . import Backend
 

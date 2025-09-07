@@ -1,5 +1,4 @@
 import json
-import os
 import random
 import shlex
 import string
@@ -10,13 +9,13 @@ import requests
 from beaker import (
     Beaker,
     BeakerDataMount,
+    BeakerDataset,
     BeakerEnvVar,
     BeakerExperimentSpec,
     BeakerJob,
     BeakerJobPriority,
     BeakerWorkloadStatus,
 )
-from beaker.types import BeakerDataset
 from rich.console import Console
 
 from minienv.backend import Backend
@@ -45,7 +44,7 @@ AUS_CLUSTERS = [
     "ai2/ceres-cirrascale",
 ]
 
-ENTRYPOINT = ["bash", "-c", "python /server/main.py"]
+DEFAULT_ENTRYPOINT = ["bash", "-c", "python /server/main.py"]
 
 
 def get_rand_suffix(k):
@@ -56,9 +55,11 @@ def launch_beaker_job(
     name,
     description,
     docker_image,
-    server_mount: BeakerDataset,
-    task_mount: BeakerDataset,
-    port,
+    port = None,
+    server_mount: Optional[BeakerDataset] = None,
+    task_mount: Optional[BeakerDataset] = None,
+    entrypoint: list[str] = DEFAULT_ENTRYPOINT,
+    additional_mounts: dict[str, BeakerDataset] = {},
     env_vars: dict[str, str] = {},
     result_path="/results",
     workspace="ai2/rollouts",
@@ -71,13 +72,28 @@ def launch_beaker_job(
         BeakerEnvVar(name=key, value=str(value)) for key, value in env_vars.items()
     ]
 
+    args = []
+
+    if port is not None:
+        args += ["--port", port]
+        beaker_env_vars += [
+            BeakerEnvVar(name="MINIENV_PORT", value=str(port)),
+        ]
+        assert server_mount is not None, \
+            "Server code is required for port access!"
+
+    datasets = []
+    
     # Add server code
-    datasets = [
-        BeakerDataMount.new(
-            beaker=server_mount.id,
-            mount_path="/server",
-        )
-    ]
+    if server_mount is not None:
+        datasets += [
+            BeakerDataMount.new(
+                beaker=server_mount.id,
+                mount_path="/server",
+            )
+        ]
+        assert port is not None, \
+            "Port is required for server access!"
 
     # Add task-specific files
     if task_mount is not None:
@@ -86,14 +102,28 @@ def launch_beaker_job(
             mount_path="/task",
         )]
 
+    # Add additional volumes
+    for mount_path, host_path in additional_mounts.items():
+        datasets += [BeakerDataMount.new(
+            mount_path=mount_path,
+            beaker=host_path.id,
+            # host_path
+            # weka
+            # result
+        )]
+
+    # Distinguish between docker-hosted and beaker-hosted images
     if '/' in docker_image:
         # this is a beaker image
-        docker_image = None
         beaker_image = docker_image
+        docker_image = None
     else:
         # this is a docker image
-        beaker_image = None
         docker_image = docker_image
+        beaker_image = None
+
+    if (beaker_image is None) == (docker_image is None):
+        raise ValueError("Exactly one of beaker_image or docker_image must be specified", (beaker_image, docker_image))
 
     spec = BeakerExperimentSpec.new(
         task_name=task_name,
@@ -108,21 +138,22 @@ def launch_beaker_job(
         datasets=datasets,
         env_vars=[
             BeakerEnvVar(name="PYTHONUNBUFFERED", value=str(1)),
-            BeakerEnvVar(name="MINIENV_PORT", value=str(port)),
         ] + beaker_env_vars,
-        command=ENTRYPOINT,
-        # @davidh -- Careful with networking
-        host_networking=True,
-        arguments=["--port", port],
+        command=entrypoint,
+        host_networking=True, # @davidh -- Careful with networking
+        arguments=args,
     )
+
+    console.print("[bold blue]Beaker experiment spec:[/bold blue]")
+    console.print(spec)
 
     workspace_link = f"https://beaker.allen.ai/orgs/ai2/workspaces/{workspace.split('/')[1]}"
 
     # Create beaker experiment
     with console.status(f"[bold yellow]creating beaker experiment at[/] {workspace_link}", spinner="dots") as _:
         workload = beaker.experiment.create(
-            name=task_name, 
             spec=spec, 
+            name=task_name, 
             workspace=workspace
         )
 
@@ -180,11 +211,13 @@ def create_dataset(name: str, description: str, source_paths: list[str], target_
     return dataset
 
 
-def get_hostname(job: BeakerJob):
+def get_hostname(job: BeakerJob, full_hostname=False):
     beaker = Beaker.from_env()
     node_id = job.assignment_details.node_id
     node = beaker.node.get(node_id)
     hostname = node.hostname
+    if not full_hostname:
+        hostname = hostname.replace('.reviz.ai2.in', '')
     return hostname
 
 

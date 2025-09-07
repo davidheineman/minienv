@@ -6,7 +6,7 @@ A docker service for LLM environments. Works locally with Docker or remote with 
 git clone https://github.com/davidheineman/minienv
 pip install -e ".[all]"
 
-# Ensure you daemon is summoned
+# Ensure your daemon is summoned
 docker run hello-world
 ```
 
