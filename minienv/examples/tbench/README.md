@@ -29,17 +29,25 @@ tb datasets download --dataset terminal-bench-core==head
 python minienv/examples/tbench/build_images.py \
     --tasks-dir /root/.cache/terminal-bench/terminal-bench-core/head
 
-# Evaluate task
+# Evaluate on Terminal-Bench
 alias minitb="python minienv/examples/tbench/tb.py"
+
 minitb run \
-    --task-id $TASK_ID \
+    --agent oracle \
+    --dataset-version head \
+    --dataset-name terminal-bench-core \
+    --n-concurrent 50
+
+minitb run \
     --agent claude-code \
     --model claude-sonnet-4-20250514 \
     --dataset-version head \
-    --dataset-name terminal-bench-core
+    --dataset-name terminal-bench-core \
+    --n-concurrent 50
 ```
 
 ### todos
+- [ ] randomize the hosts when launching jobs (it all defaults to the same host)
 - [ ] add from docker compose:
     - [ ] volume mounts
     - [ ] environment keys

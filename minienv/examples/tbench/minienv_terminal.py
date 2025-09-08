@@ -62,12 +62,21 @@ class DirectDockerBackend(BeakerBackend):
         if not self.docker_client:
             raise RuntimeError("Docker client not initialized")
 
-        # Get containers and find the one with the specific beaker task label
-        containers = self.docker_client.containers.list()
+        # Get all containers
+        @retry(
+            stop=stop_after_attempt(5),
+            wait=wait_exponential(multiplier=1, min=1, max=30),
+            retry=retry_if_exception_type(Exception),
+            reraise=True
+        )
+        def _list_containers():
+            return self.docker_client.containers.list()
+        
+        containers = _list_containers()
         if not containers:
             raise RuntimeError("No running containers found on remote host")
 
-        # Get the container corresponding to the task ID
+        # Find the container corresponding to the task ID
         task_id = self.job.task_id
         
         for container in containers:
