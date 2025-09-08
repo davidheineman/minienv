@@ -27,6 +27,7 @@ tb datasets list
     # mlebench-lite==head
     # sweperf==head
     # swesmith==head
+    # swe-lancer-diamond-ic==head
 tb datasets download --dataset terminal-bench-core==0.1.1
 
 # Build images
