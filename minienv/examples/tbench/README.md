@@ -23,27 +23,30 @@ pip install -e ".[beaker,dev,docker,tbench]"
 tb datasets list
 
 # Download tasks
-tb datasets download --dataset terminal-bench-core==head
+    # swebench-verified==head
+    # mlebench-lite==head
+    # sweperf==head
+    # swesmith==head
+tb datasets download --dataset terminal-bench-core==0.1.1
 
 # Build images
 python minienv/examples/tbench/build_images.py \
-    --tasks-dir /root/.cache/terminal-bench/terminal-bench-core/head
+    --tasks-dir /root/.cache/terminal-bench/terminal-bench-core/0.1.1
 
 # Evaluate on Terminal-Bench
 alias minitb="python minienv/examples/tbench/tb.py"
 
 minitb run \
-    --agent oracle \
-    --dataset-version head \
-    --dataset-name terminal-bench-core \
-    --n-concurrent 50
+    -a oracle \
+    -d terminal-bench-core==0.1.1 \
+    --n-concurrent 30
 
 minitb run \
-    --agent claude-code \
-    --model claude-sonnet-4-20250514 \
-    --dataset-version head \
-    --dataset-name terminal-bench-core \
-    --n-concurrent 50
+    -a claude-code \
+    -m claude-sonnet-4-20250514 \
+    -a oracle \
+    -d terminal-bench-core==0.1.1 \
+    --n-concurrent 30
 ```
 
 ### todos

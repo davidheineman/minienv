@@ -219,7 +219,7 @@ def build_task(compose_file, task_id, workspace, force_rebuild):
     if not force_rebuild and pusher.image_exists_on_beaker(image_name):
         beaker_full_name = f"{BEAKER_USER}/{image_name}"
         logger.info(f"Image for '{task_id}' already exists on Beaker: '{beaker_full_name}'. Skipping...")
-        return beaker_full_name
+        return
     
     docker_manager = DockerManager()
 
@@ -246,8 +246,6 @@ def build_task(compose_file, task_id, workspace, force_rebuild):
         beaker_image_tag="latest",
     )
     logger.info(f"Successfully pushed {task_id} to Beaker: {beaker_image}")
-
-    return beaker_image
 
 
 def build_tasks(tasks, tasks_dir, workspace, force_rebuild):
