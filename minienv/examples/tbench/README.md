@@ -48,6 +48,7 @@ minitb run \
 
 ### todos
 - [ ] randomize the hosts when launching jobs (it all defaults to the same host)
+- [ ] builds are failing for images that specify platforms other than `linux/amd64`
 - [ ] add from docker compose:
     - [ ] volume mounts
     - [ ] environment keys
