@@ -31,7 +31,7 @@ tb datasets download --dataset terminal-bench-core==0.1.1
 
 # Build images
 python minienv/examples/tbench/build_images.py \
-    --tasks-dir /root/.cache/terminal-bench/terminal-bench-core/0.1.1
+    --tasks-dir ~/.cache/terminal-bench/terminal-bench-core/0.1.1
 
 # Evaluate on Terminal-Bench
 alias minitb="python minienv/examples/tbench/tb.py"

@@ -7,9 +7,10 @@ import logging
 from pathlib import Path
 import docker
 import multiprocessing
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool
 from functools import partial
-from typing import Optional
+from typing import Optional, Dict
+import yaml
 
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s\t%(message)s")
@@ -31,7 +32,7 @@ class BeakerImagePusher:
     def image_exists_on_beaker(self, image_name: str) -> bool:
         """Check if an image exists on Beaker."""
         beaker_full_name = f"{BEAKER_USER}/{image_name}"
-        
+
         try:
             cmd = ["beaker", "image", "inspect", beaker_full_name]
             self._logger.info(f"Running: {' '.join(cmd)}")
@@ -89,12 +90,8 @@ class BeakerImagePusher:
             if result.stderr:
                 raise RuntimeError(f"Beaker CLI stderr: {result.stderr}")
 
-            beaker_full_name = (
-                f"{self.workspace}/{beaker_image_name}:{beaker_image_tag}"
-            )
-            self._logger.info(
-                f"Successfully pushed image to Beaker: {beaker_full_name}"
-            )
+            beaker_full_name = f"{self.workspace}/{beaker_image_name}:{beaker_image_tag}"
+            self._logger.info(f"Successfully pushed image to Beaker: {beaker_full_name}")
 
             return beaker_full_name
 
@@ -131,45 +128,102 @@ class DockerManager:
         self.client.ping()
         logger.info("Successfully connected to Docker daemon")
 
-    def build_from_compose(
-        self, compose_file_path: str, service_name: str = "client"
-    ) -> str:
+    def build_from_compose(self, compose_file_path: str, service_name: str = "client") -> str:
         compose_path = Path(compose_file_path)
         if not compose_path.exists():
-            raise FileNotFoundError(
-                f"Docker compose file not found: {compose_file_path}"
-            )
+            raise FileNotFoundError(f"Docker compose file not found: {compose_file_path}")
 
-        build_context = compose_path.parent
-        dockerfile_path = build_context / "Dockerfile"
+        # Parse the compose file to extract build configuration
+        build_config = self._parse_compose_build_config(compose_path, service_name)
 
-        if not dockerfile_path.exists():
-            raise FileNotFoundError(f"Dockerfile not found in: {build_context}")
+        logger.info(f"Building Docker image for service '{service_name}'")
+        logger.info(f"Build context: {build_config['context']}")
+        logger.info(f"Dockerfile: {build_config['dockerfile']}")
 
-        logger.info(f"Building Docker image from {dockerfile_path}")
-
-        # Use docker buildx to ensure proper platform targeting
         tag = f"{service_name}-temp"
+
+        # Set environment variable for platform targeting
+        env = os.environ.copy()
+        env["DOCKER_DEFAULT_PLATFORM"] = BEAKER_PLATFORM
+
         cmd = [
             "docker",
-            "buildx",
+            "compose",
+            "-f",
+            str(compose_path),
             "build",
-            "--platform",
-            BEAKER_PLATFORM,
-            "--tag",
-            tag,
-            "--load",  # Load the image into docker images
-            str(build_context),
+            # "--no-cache",  # Ensure fresh build
+            service_name,
         ]
 
         logger.info(f"Running: {' '.join(cmd)}")
 
         try:
-            result = subprocess.run(cmd, check=True, capture_output=False, text=True)
-            logger.info(f"Successfully built image: {tag}")
+            result = subprocess.run(
+                cmd,
+                check=True,
+                capture_output=False,
+                text=True,
+                env=env,
+                cwd=compose_path.parent,  # Run from compose file directory
+            )
+            logger.info(f"Successfully built image for service: {service_name}")
+
+            # Tag the built image with our temporary tag
+            self.tag_image(service_name, tag)
+
             return tag
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to build Docker image: {e}")
+            raise RuntimeError(f"Failed to build Docker image using compose: {e}")
+
+    def _parse_compose_build_config(self, compose_path: Path, service_name: str) -> Dict[str, str]:
+        """
+        Parse the docker-compose file to extract build configuration for a specific service.
+        Returns a dict with 'context' and 'dockerfile' keys.
+        """
+        with open(compose_path, "r") as f:
+            compose_data = yaml.safe_load(f)
+
+        if "services" not in compose_data:
+            raise RuntimeError(f"No 'services' section found in {compose_path}")
+
+        if service_name not in compose_data["services"]:
+            available_services = list(compose_data["services"].keys())
+            raise RuntimeError(
+                f"Service '{service_name}' not found in compose file. "
+                f"Available services: {available_services}"
+            )
+
+        service_config = compose_data["services"][service_name]
+
+        if "build" not in service_config:
+            raise RuntimeError(
+                f"Service '{service_name}' has no 'build' configuration in {compose_path}"
+            )
+
+        build_config = service_config["build"]
+
+        # Handle different build config formats
+        if isinstance(build_config, str):
+            # Simple string format: just the context
+            context = build_config
+            dockerfile = "Dockerfile"
+        elif isinstance(build_config, dict):
+            # Full build configuration
+            context = build_config.get("context", ".")
+            dockerfile = build_config.get("dockerfile", "Dockerfile")
+        else:
+            raise RuntimeError(f"Invalid build configuration format for service '{service_name}'")
+
+        # Resolve relative paths relative to the compose file directory
+        compose_dir = compose_path.parent
+        if not os.path.isabs(context):
+            context = str(compose_dir / context)
+
+        if not os.path.isabs(dockerfile):
+            dockerfile = str(Path(context) / dockerfile)
+
+        return {"context": context, "dockerfile": dockerfile}
 
     def tag_image(self, source_tag: str, new_tag: str) -> bool:
         """Tag an existing image with a new tag."""
@@ -177,6 +231,7 @@ class DockerManager:
         try:
             subprocess.run(cmd, check=True, capture_output=True, text=True)
             logger.info(f"Successfully tagged image {source_tag} as {new_tag}")
+            return True
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Failed to tag image {source_tag} as {new_tag}: {e}")
 
@@ -215,12 +270,14 @@ def build_task(compose_file, task_id, workspace, force_rebuild):
     # Check if image already exists on Beaker
     pusher = BeakerImagePusher(workspace)
     image_name = get_image_name(task_id)
-    
+
     if not force_rebuild and pusher.image_exists_on_beaker(image_name):
         beaker_full_name = f"{BEAKER_USER}/{image_name}"
-        logger.info(f"Image for '{task_id}' already exists on Beaker: '{beaker_full_name}'. Skipping...")
+        logger.info(
+            f"Image for '{task_id}' already exists on Beaker: '{beaker_full_name}'. Skipping..."
+        )
         return
-    
+
     docker_manager = DockerManager()
 
     # Build and tag image
@@ -252,21 +309,18 @@ def build_tasks(tasks, tasks_dir, workspace, force_rebuild):
     """Build tasks using a process pool with 20 workers."""
     # Create a partial function with fixed arguments
     build_task_with_args = partial(
-        build_task_wrapper, 
-        tasks_dir=tasks_dir, 
-        workspace=workspace, 
-        force_rebuild=force_rebuild
+        build_task_wrapper, tasks_dir=tasks_dir, workspace=workspace, force_rebuild=force_rebuild
     )
-    
+
     # Use process pool with 20 workers
     max_workers = min(20, len(tasks))
     logger.info(f"Building {len(tasks)} tasks using {max_workers} parallel workers")
-    
+
     failed_tasks = []
     with Pool(processes=max_workers) as pool:
         # Map tasks to the process pool
         results = pool.map(build_task_with_args, tasks)
-        
+
         # Process results
         for task_id, result in zip(tasks, results):
             if result is None:
@@ -311,18 +365,17 @@ def main(tasks, tasks_dir, workspace, force_rebuild):
 
 
 if __name__ == "__main__":
-    multiprocessing.set_start_method('spawn', force=True)
-    
+    multiprocessing.set_start_method("spawn", force=True)
+
     parser = argparse.ArgumentParser(description="Build and push T-Bench tasks")
     parser.add_argument("--task", type=str, help="Specific task to build")
+    parser.add_argument("--tasks-dir", type=str, default="tasks", help="Directory containing tasks")
+    parser.add_argument("--workspace", type=str, default="ai2/rollouts", help="Beaker workspace")
     parser.add_argument(
-        "--tasks-dir", type=str, default="tasks", help="Directory containing tasks"
-    )
-    parser.add_argument(
-        "--workspace", type=str, default="ai2/rollouts", help="Beaker workspace"
-    )
-    parser.add_argument(
-        "-f", "--force-rebuild", action="store_true", help="Force force_rebuild even if image exists on Beaker"
+        "-f",
+        "--force-rebuild",
+        action="store_true",
+        help="Force force_rebuild even if image exists on Beaker",
     )
 
     args = parser.parse_args()
