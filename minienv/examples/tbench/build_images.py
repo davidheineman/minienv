@@ -329,15 +329,18 @@ def build_task(compose_file, task_id, workspace, force_rebuild):
     logger.info(f"Successfully pushed {task_id} to Beaker: {beaker_image}")
 
 
-def build_tasks(tasks, tasks_dir, workspace, force_rebuild):
-    """Build tasks using a process pool with 20 workers."""
+def build_tasks(tasks, tasks_dir, workspace, force_rebuild, n_concurrent=None):
+    """Build tasks using a process pool with configurable workers."""
     # Create a partial function with fixed arguments
     build_task_with_args = partial(
         build_task_wrapper, tasks_dir=tasks_dir, workspace=workspace, force_rebuild=force_rebuild
     )
 
-    # Use process pool with 20 workers
-    max_workers = min(20, len(tasks))
+    # Use process pool with configurable workers (default to 20 if None)
+    if n_concurrent is None:
+        max_workers = min(20, len(tasks))
+    else:
+        max_workers = min(n_concurrent, len(tasks))
     logger.info(f"Building {len(tasks)} tasks using {max_workers} parallel workers")
 
     failed_tasks = []
@@ -358,7 +361,7 @@ def build_tasks(tasks, tasks_dir, workspace, force_rebuild):
     return failed_tasks
 
 
-def main(tasks, tasks_dir, workspace, force_rebuild):
+def main(tasks, tasks_dir, workspace, force_rebuild, n_concurrent=None):
     # Ensure all tasks exist and are valid
     if tasks:
         tasks_to_build = [tasks]
@@ -379,7 +382,7 @@ def main(tasks, tasks_dir, workspace, force_rebuild):
 
     # Build tasks
     failed_tasks = build_tasks(
-        tasks=tasks_to_build, tasks_dir=tasks_dir, workspace=workspace, force_rebuild=force_rebuild
+        tasks=tasks_to_build, tasks_dir=tasks_dir, workspace=workspace, force_rebuild=force_rebuild, n_concurrent=n_concurrent
     )
 
     if failed_tasks:
@@ -401,7 +404,13 @@ if __name__ == "__main__":
         action="store_true",
         help="Force force_rebuild even if image exists on Beaker",
     )
+    parser.add_argument(
+        "--n-concurrent",
+        type=int,
+        default=None,
+        help="Number of concurrent workers (default: None for full concurrency)",
+    )
 
     args = parser.parse_args()
 
-    main(args.task, args.tasks_dir, args.workspace, args.force_rebuild)
+    main(args.task, args.tasks_dir, args.workspace, args.force_rebuild, args.n_concurrent)
