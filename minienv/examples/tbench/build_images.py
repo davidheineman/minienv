@@ -148,7 +148,14 @@ class DockerManager:
 
         # Use relative path for compose file when changing working directory
         compose_file_name = compose_path.name
-        
+
+        # Set docker compose defaults!
+        env["T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME"] = "client"
+        env["T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME"] = service_name # f"tbench_{task_dir.name}"
+        env["T_BENCH_TEST_DIR"] = "/tests"
+        env["T_BENCH_TASK_LOGS_PATH"] = "/results"
+        env["T_BENCH_CONTAINER_LOGS_PATH"] = "/var/log/tbench"
+
         cmd = [
             "docker",
             "compose",
