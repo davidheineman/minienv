@@ -146,11 +146,14 @@ class DockerManager:
         env = os.environ.copy()
         env["DOCKER_DEFAULT_PLATFORM"] = BEAKER_PLATFORM
 
+        # Use relative path for compose file when changing working directory
+        compose_file_name = compose_path.name
+        
         cmd = [
             "docker",
             "compose",
             "-f",
-            str(compose_path),
+            compose_file_name,
             "build",
             # "--no-cache",  # Ensure fresh build
             service_name,
@@ -169,12 +172,26 @@ class DockerManager:
             )
             logger.info(f"Successfully built image for service: {service_name}")
 
+            # Get the actual image name from the compose file
+            actual_image_name = self._get_image_name_from_compose(compose_path, service_name)
+            
             # Tag the built image with our temporary tag
-            self.tag_image(service_name, tag)
+            self.tag_image(actual_image_name, tag)
 
             return tag
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Failed to build Docker image using compose: {e}")
+
+    def _get_image_name_from_compose(self, compose_path: Path, service_name: str) -> str:
+        """Get the actual image name from the compose file for a service."""
+        with open(compose_path, "r") as f:
+            compose_data = yaml.safe_load(f)
+        
+        if "services" not in compose_data or service_name not in compose_data["services"]:
+            return service_name  # Fallback to service name
+        
+        service_config = compose_data["services"][service_name]
+        return service_config.get("image", service_name)
 
     def _parse_compose_build_config(self, compose_path: Path, service_name: str) -> Dict[str, str]:
         """

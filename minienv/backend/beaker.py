@@ -15,6 +15,7 @@ from beaker import (
     BeakerJob,
     BeakerJobPriority,
     BeakerWorkloadStatus,
+    BeakerConstraints
 )
 from rich.console import Console
 
@@ -133,7 +134,6 @@ def launch_beaker_job(
         priority=BeakerJobPriority.normal,
         preemptible=True,
         budget="ai2/oe-eval",
-        cluster=AUS_CLUSTERS,
         result_path=result_path,
         datasets=datasets,
         env_vars=[
@@ -143,6 +143,21 @@ def launch_beaker_job(
         host_networking=True, # @davidh -- Careful with networking
         arguments=args,
     )
+
+    # set tasks to specific hostnames
+    hostnames = get_node_hostnames()
+    for task in spec.tasks:
+        if not task:
+            continue
+
+        saturn_hosts = [host for host in hostnames if "saturn" in host]
+        
+        # randomly sample 3 hostnames
+        assert len(saturn_hosts) > 3, saturn_hosts
+        task.constraints = BeakerConstraints(
+            hostname = random.choices(saturn_hosts, k=3),
+            cluster = None # AUS_CLUSTERS
+        )
 
     console.print("[bold blue]Beaker experiment spec:[/bold blue]")
     console.print(spec)
@@ -211,7 +226,7 @@ def create_dataset(name: str, description: str, source_paths: list[str], target_
     return dataset
 
 
-def get_hostname(job: BeakerJob, full_hostname=False):
+def get_hostname(job: BeakerJob, full_hostname=True):
     beaker = Beaker.from_env()
     node_id = job.assignment_details.node_id
     node = beaker.node.get(node_id)
@@ -236,6 +251,29 @@ def ping_server(hostname: str, port: int, timeout: int = 20):
         time.sleep(2)
 
     return False
+
+
+def get_node_hostnames():
+    """Get a sorted list of all hostnames from beaker nodes."""
+    import subprocess
+    
+    cmd = ["beaker", "node", "list", "--format", "json"]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to get node list: {result.stderr}", style="red")
+
+    # Parse JSON output
+    nodes_data = json.loads(result.stdout)
+
+    # Extract hostnames
+    hostnames = []
+    for node in nodes_data:
+        if "hostname" in node and isinstance(node["hostname"], str):
+            hostnames.append(node["hostname"])
+    hostnames.sort()
+            
+    return hostnames
 
 
 class BeakerBackend(Backend):
