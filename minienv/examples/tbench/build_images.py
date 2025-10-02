@@ -180,7 +180,8 @@ class DockerManager:
             logger.info(f"Successfully built image for service: {service_name}")
 
             # Get the actual image name from the compose file
-            actual_image_name = self._get_image_name_from_compose(compose_path, service_name)
+            # actual_image_name = self._get_image_name_from_compose(compose_path, service_name)
+            actual_image_name = "client" # this is overridden by the env var!
             
             # Tag the built image with our temporary tag
             self.tag_image(actual_image_name, tag)
