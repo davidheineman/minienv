@@ -14,6 +14,7 @@ from beaker import (
     BeakerExperimentSpec,
     BeakerJob,
     BeakerJobPriority,
+    BeakerTaskResources,
     BeakerWorkloadStatus,
     BeakerConstraints
 )
@@ -56,6 +57,7 @@ def launch_beaker_job(
     name,
     description,
     docker_image,
+    gpu_count = 0,
     port = None,
     server_mount: Optional[BeakerDataset] = None,
     task_mount: Optional[BeakerDataset] = None,
@@ -64,6 +66,7 @@ def launch_beaker_job(
     env_vars: dict[str, str] = {},
     result_path="/results",
     workspace="ai2/rollouts",
+    timeout=None,
 ) -> BeakerJob:
     beaker = Beaker.from_env()
 
@@ -142,20 +145,31 @@ def launch_beaker_job(
         command=entrypoint,
         host_networking=True, # @davidh -- Careful with networking
         arguments=args,
+        timeout=timeout, # (in seconds)
     )
-
+    
     # set tasks to specific hostnames
     hostnames = get_node_hostnames()
     for task in spec.tasks:
         if not task:
             continue
 
-        saturn_hosts = [host for host in hostnames if "saturn" in host]
+        selected_hosts = [
+            host for host in hostnames if \
+                "saturn" in host or "neptune" in host # triton "does not allow tasks"
+        ]
         
-        # randomly sample 3 hostnames
-        assert len(saturn_hosts) > 3, saturn_hosts
+        if gpu_count == 0:
+            # For CPU-only experiments, randomly sample a host
+            assert len(selected_hosts) > 3, selected_hosts
+            selected_hosts = random.choices(selected_hosts, k=3)
+        else:
+            task.resources = BeakerTaskResources(
+                gpu_count=gpu_count
+            )
+        
         task.constraints = BeakerConstraints(
-            hostname = random.choices(saturn_hosts, k=3),
+            hostname = selected_hosts,
             cluster = None # AUS_CLUSTERS
         )
 

@@ -433,6 +433,7 @@ class MinienvTerminal:
                 name=f"tbench.{task_name}",
                 description=f"Terminal-Bench: '{task_name}' on '{image}'",
                 docker_image=image,
+                gpu_count=1, # using 1 gpu for now
                 # additional_mounts={
                 #     # - ${T_BENCH_TASK_LOGS_PATH}:${T_BENCH_CONTAINER_LOGS_PATH}
                 #     # - ${T_BENCH_TASK_AGENT_LOGS_PATH}:${T_BENCH_CONTAINER_AGENT_LOGS_PATH}
@@ -451,6 +452,7 @@ class MinienvTerminal:
                     "TEST_DIR": "/tests",
                 },
                 workspace=self._beaker_workspace,
+                timeout=4*60*60 # 4 hours, prevents ghosts in the machine
             )
 
             hostname = get_hostname(job)
