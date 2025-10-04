@@ -18,6 +18,7 @@ from beaker import (
     BeakerWorkloadStatus,
     BeakerConstraints
 )
+from beaker import beaker_pb2 as pb2
 from rich.console import Console
 
 from minienv.backend import Backend
@@ -288,6 +289,27 @@ def get_node_hostnames():
     hostnames.sort()
             
     return hostnames
+
+
+def kill_beaker_job(job_id):
+    beaker = Beaker.from_env()
+
+    # Get the job
+    job: pb2.Job = beaker.job.get(job_id)
+    
+    # Get the workload ID from env vars
+    workload_id = None
+    for env_var in job.assignment_details.assigned_environment_variables:
+        if env_var.name == "BEAKER_WORKLOAD_ID":
+            workload_id = env_var.literal
+            break
+    
+    if not workload_id:
+        raise RuntimeError(f"Job {job_id} does not have a workload ID in environment variables")
+    
+    # Cancel the workload
+    workload = beaker.workload.get(workload_id)
+    beaker.workload.cancel(workload)
 
 
 class BeakerBackend(Backend):

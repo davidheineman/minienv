@@ -1,3 +1,6 @@
+import multiprocessing as mp
+mp.set_start_method("fork", force=True)
+
 from terminal_bench.cli.tb.main import app
 from terminal_bench.harness import harness
 from minienv_terminal import spin_up_minienv_terminal

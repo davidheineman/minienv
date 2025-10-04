@@ -27,6 +27,7 @@ from docker.models.containers import Container
 from minienv.backend.beaker import (
     BeakerBackend,
     get_hostname,
+    kill_beaker_job,
     launch_beaker_job,
 )
 
@@ -488,7 +489,9 @@ class MinienvTerminal:
                 session = self.create_session("shutdown")
                 session.send_command(TerminalCommand(command="kill -TERM 1"))
             except Exception as e:
-                self._logger.error(f"Error stopping minienv environment: {e}")
+                self._logger.error(f"\nError stopping minienv environment: {e}")
+                self._logger.debug("Attempting to kill with Beaker API")
+                kill_beaker_job(job_id=self._backend.job.id)
 
         # Reset sessions dict
         self._sessions.clear()
