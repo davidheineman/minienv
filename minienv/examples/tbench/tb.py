@@ -3,7 +3,7 @@ mp.set_start_method("fork", force=True)
 
 from terminal_bench.cli.tb.main import app
 from terminal_bench.harness import harness
-from minienv_terminal import spin_up_minienv_terminal
+from minienv.examples.tbench.minienv_terminal import spin_up_minienv_terminal
 
 def patched_spin_up_terminal(*args, **kwargs):
     return spin_up_minienv_terminal(
