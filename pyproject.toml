@@ -43,7 +43,7 @@ swebench = [
     "datasets"
 ]
 tbench = [
-    "terminal-bench",
+    "terminal-bench @ git+https://github.com/davidheineman/terminal-bench.git@thread-pool-fix",
     "paramiko",
     "tenacity",
 ]
