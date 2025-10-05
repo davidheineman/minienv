@@ -11,6 +11,9 @@ def patched_spin_up_terminal(*args, **kwargs):
         beaker_workspace='ai2/rollouts'
     )
 
-harness.spin_up_terminal = patched_spin_up_terminal
+def cli():
+    harness.spin_up_terminal = patched_spin_up_terminal
+    app()
 
-app()
+if __name__ == "__main__":
+    cli()

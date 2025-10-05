@@ -21,6 +21,8 @@ Homepage = "https://github.com/davidheineman/minienv"
 
 [project.scripts]
 minienv = "minienv.cli:cli_main"
+minitb = "minienv.examples.tbench.tb:cli"
+minibuild = "minienv.examples.tbench.build_images:cli"
 
 [project.optional-dependencies]
 dev = [
@@ -47,7 +49,7 @@ tbench = [
     "paramiko",
     "tenacity",
 ]
-all = ["minienv[dev,beaker,docker,swebench]"]
+all = ["minienv[dev,beaker,docker,swebench,tbench]"]
 
 [tool.setuptools]
 include-package-data = true

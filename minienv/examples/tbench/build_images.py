@@ -392,7 +392,7 @@ def main(tasks, tasks_dir, workspace, force_rebuild, n_concurrent=None):
     logger.info("All task images built + pushed!")
 
 
-if __name__ == "__main__":
+def cli():
     multiprocessing.set_start_method("spawn", force=True)
 
     parser = argparse.ArgumentParser(description="Build and push T-Bench tasks")
@@ -415,3 +415,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     main(args.task, args.tasks_dir, args.workspace, args.force_rebuild, args.n_concurrent)
+
+if __name__ == "__main__":
+    cli()
