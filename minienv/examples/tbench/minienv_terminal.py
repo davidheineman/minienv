@@ -430,6 +430,8 @@ class MinienvTerminal:
 
             # TODO: Ensure that the image exists in the workspace
 
+            self._logger.debug(f"Starting job with image: {image}")
+
             job = launch_beaker_job(
                 name=f"tbench.{task_name}",
                 description=f"Terminal-Bench: '{task_name}' on '{image}'",
@@ -456,11 +458,14 @@ class MinienvTerminal:
                 timeout=4*60*60 # 4 hours, prevents ghosts in the machine
             )
 
+            self._logger.debug(f"Job started: {job.id}")
+
             hostname = get_hostname(job)
+
+            self._logger.debug(f"Hostname found: {hostname}")
 
             self._backend.job = job
             self._backend.image_name = image
-
             self.hostname = hostname
 
             # Initialize Docker connection via SSH using the hostname from Beaker
