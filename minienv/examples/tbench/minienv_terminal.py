@@ -421,7 +421,7 @@ class MinienvTerminal:
         """Start the minienv environment."""
         try:
             # TODO @davidh: Support all this functionality natively in minienv
-            task_name = self._client_container_name
+            run_name = self._client_container_name
             image = self._client_image_name
 
             # TODO: read self._docker_compose_path (yaml) for the env vars in services.client.environment
@@ -430,29 +430,26 @@ class MinienvTerminal:
 
             # TODO: Ensure that the image exists in the workspace
 
+            # TODO: Use these to build and deploy the image
+            # self.client_container_name
+            # self.client_image_name
+
             self._logger.debug(f"Starting job with image: {image}")
 
             job = launch_beaker_job(
-                name=f"tbench.{task_name}",
-                description=f"Terminal-Bench: '{task_name}' on '{image}'",
+                name=f"tbench.{run_name}",
+                description=f"Terminal-Bench: '{run_name}' on '{image}'",
                 docker_image=image,
-                gpu_count=1, # using 1 gpu for now
-                # additional_mounts={
-                #     # - ${T_BENCH_TASK_LOGS_PATH}:${T_BENCH_CONTAINER_LOGS_PATH}
-                #     # - ${T_BENCH_TASK_AGENT_LOGS_PATH}:${T_BENCH_CONTAINER_AGENT_LOGS_PATH}
-                #     "/var/log/tbench": T_BENCH_CONTAINER_LOGS_PATH,
-                # },  # TODO: add volumes here
-                # result_path="/var/log/tbench",
+                gpu_count=0, # using 1 gpu for now
                 entrypoint=[
                     "sh",
                     "-c",
                     "trap 'exit 0' TERM INT; while true; do sleep 1; done",
                 ],
-                # TODO: Use these to build and deploy the image
-                # self.client_container_name
-                # self.client_image_name
                 env_vars={  # TODO: Load env vars from container (maybe you can inspect the image to get this?)
                     "TEST_DIR": "/tests",
+                    "TBENCH_TASK_NAME": image,
+                    "TBENCH_RUN_NAME": run_name,
                 },
                 workspace=self._beaker_workspace,
                 timeout=4*60*60 # 4 hours, prevents ghosts in the machine
