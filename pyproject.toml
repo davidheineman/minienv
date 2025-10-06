@@ -9,7 +9,7 @@ description = "Docker service for LLM rollouts"
 authors = [
     { name = "David Heineman", email = "david@davidheineman.com" },
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "rich",
     "openai", # TODO: replace with litellm
