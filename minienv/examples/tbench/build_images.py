@@ -128,7 +128,7 @@ class DockerManager:
         self.client.ping()
         logger.info("Successfully connected to Docker daemon")
 
-    def build_from_compose(self, compose_file_path: str, service_name: str = "client") -> str:
+    def build_from_compose(self, compose_file_path: str, service_name: str = "client", temp_tag: Optional[str] = None) -> str:
         compose_path = Path(compose_file_path)
         if not compose_path.exists():
             raise FileNotFoundError(f"Docker compose file not found: {compose_file_path}")
@@ -140,7 +140,8 @@ class DockerManager:
         logger.info(f"Build context: {build_config['context']}")
         logger.info(f"Dockerfile: {build_config['dockerfile']}")
 
-        tag = f"{service_name}-temp"
+        # Use unique tag if provided, otherwise generate one with process ID
+        tag = f"{service_name}-temp-{os.getpid()}" if temp_tag is None else temp_tag
 
         # Set environment variable for platform targeting
         env = os.environ.copy()
@@ -162,7 +163,7 @@ class DockerManager:
             "-f",
             compose_file_name,
             "build",
-            # "--no-cache",  # Ensure fresh build
+            "--no-cache",  # Prevent cache sharing between parallel builds
             service_name,
         ]
 
@@ -305,8 +306,11 @@ def build_task(compose_file, task_id, workspace, force_rebuild):
 
     docker_manager = DockerManager()
 
-    # Build and tag image
-    temp_tag = docker_manager.build_from_compose(compose_file)
+    # Generate unique temporary tag per process and task
+    temp_tag = f"client-temp-{os.getpid()}-{task_id}"
+    
+    # Build and tag image with unique tag
+    temp_tag = docker_manager.build_from_compose(compose_file, temp_tag=temp_tag)
     local_image_tag = get_image_name(task_id)
     docker_manager.tag_image(temp_tag, local_image_tag)
 
