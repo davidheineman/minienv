@@ -440,7 +440,7 @@ class MinienvTerminal:
                 name=f"tbench.{run_name}",
                 description=f"Terminal-Bench: '{run_name}' on '{image}'",
                 docker_image=image,
-                gpu_count=0, # using 1 gpu for now
+                gpu_count=1, # using 1 gpu for now
                 entrypoint=[
                     "sh",
                     "-c",
