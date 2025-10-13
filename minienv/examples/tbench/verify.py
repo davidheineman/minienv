@@ -28,6 +28,29 @@ def verify_container_files(beaker_image: str, task_id: str, tasks_dir: str) -> b
         result = subprocess.run(pull_cmd, check=True, capture_output=True, text=True)
         logger.info(f"Successfully pulled image: {beaker_image}")
         
+        # Parse the output to get the actual Docker image name (GCR format)
+        # Example output: "Pulling gcr.io/ai2-beaker-core/public/d3htptdqq97c73at9k2g ..."
+        docker_image = None
+        for line in result.stdout.split('\n'):
+            if 'Pulling gcr.io' in line:
+                # Extract the GCR image name
+                parts = line.split()
+                for part in parts:
+                    if part.startswith('gcr.io'):
+                        docker_image = part.rstrip('...')
+                        break
+                break
+        
+        if not docker_image:
+            logger.error(f"Could not parse Docker image name from beaker pull output")
+            logger.error(f"Output was: {result.stdout}")
+            return False
+        
+        # Tag the GCR image with the Beaker name so Docker can find it
+        logger.info(f"Tagging {docker_image} as {beaker_image}")
+        tag_cmd = ["docker", "tag", f"{docker_image}:latest", beaker_image]
+        subprocess.run(tag_cmd, check=True, capture_output=True, text=True)
+        
         # Get the local paper.md file path
         local_paper_path = Path(tasks_dir) / task_id / "paper.md"
         if not local_paper_path.exists():
