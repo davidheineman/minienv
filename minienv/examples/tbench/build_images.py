@@ -151,8 +151,8 @@ class DockerManager:
         compose_file_name = compose_path.name
 
         # Set docker compose defaults!
-        env["T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME"] = "client"
-        env["T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME"] = service_name # f"tbench_{task_dir.name}"
+        env["T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME"] = tag
+        env["T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME"] = tag
         env["T_BENCH_TEST_DIR"] = "/tests"
         env["T_BENCH_TASK_LOGS_PATH"] = "/results"
         env["T_BENCH_CONTAINER_LOGS_PATH"] = "/var/log/tbench"
@@ -180,12 +180,6 @@ class DockerManager:
             )
             logger.info(f"Successfully built image for service: {service_name}")
 
-            # Get the actual image name from the compose file
-            # actual_image_name = self._get_image_name_from_compose(compose_path, service_name)
-            actual_image_name = "client" # this is overridden by the env var!
-            
-            # Tag the built image with our temporary tag
-            self.tag_image(actual_image_name, tag)
 
             return tag
         except subprocess.CalledProcessError as e:

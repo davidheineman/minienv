@@ -23,6 +23,7 @@ Homepage = "https://github.com/davidheineman/minienv"
 minienv = "minienv.cli:cli_main"
 minitb = "minienv.examples.tbench.tb:cli"
 minibuild = "minienv.examples.tbench.build_images:cli"
+miniverify = "minienv.examples.tbench.verify:cli"
 
 [project.optional-dependencies]
 dev = [
