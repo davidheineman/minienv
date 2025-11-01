@@ -18,8 +18,18 @@ os.environ["GRPC_KEEPALIVE_TIME_MS"] = "30000"
 os.environ["GRPC_KEEPALIVE_TIMEOUT_MS"] = "20000"
 os.environ["GRPC_GO_IDLE_CONNECTION_TIMEOUT"] = "0"
 
+# Set GRPC DNS resolver to native to avoid DNS resolution issues
+os.environ["GRPC_DNS_RESOLVER"] = "native"
+
 # Don't propagate tenacity failures
 logging.getLogger("tenacity").propagate = False
+
+# # Set Beaker logger to debug
+# logging.getLogger("beaker").setLevel(logging.DEBUG)
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# )
 
 import docker
 from docker.models.containers import Container
@@ -440,7 +450,7 @@ class MinienvTerminal:
                 name=f"tbench.{run_name}",
                 description=f"Terminal-Bench: '{run_name}' on '{image}'",
                 docker_image=image,
-                gpu_count=1, # using 1 gpu for now
+                gpu_count=0, # using 1 gpu for now
                 entrypoint=[
                     "sh",
                     "-c",
