@@ -270,10 +270,26 @@ def ping_server(hostname: str, port: int, timeout: int = 20):
 
 def get_node_hostnames():
     """Get a sorted list of all hostnames from beaker nodes."""
-    client = Beaker.from_env()
+    # client = Beaker.from_env()
+    # hostnames = sorted([node.hostname for node in client.node.list()])
 
-    # List all nodes
-    hostnames = sorted([node.hostname for node in client.node.list()])
+    import subprocess
+
+    cmd = "beaker node list --format json"
+    result = subprocess.run(cmd.split(" "), capture_output=True, text=True)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to get node list: {result.stderr}", style="red")
+
+    # Parse JSON output
+    nodes_data = json.loads(result.stdout)
+
+    # Extract hostnames
+    hostnames = []
+    for node in nodes_data:
+        if "hostname" in node and isinstance(node["hostname"], str):
+            hostnames.append(node["hostname"])
+    hostnames.sort()
     
     return hostnames
 
