@@ -46,15 +46,15 @@ swebench = [
     "datasets"
 ]
 tbench = [
-    # "terminal-bench @ git+https://github.com/davidheineman/terminal-bench.git@tinker",
-    "terminal-bench",
+    "terminal-bench @ git+https://github.com/davidheineman/terminal-bench.git@tinker",
+    # "terminal-bench",
     "paramiko",
     "tenacity",
 ]
 all = ["minienv[dev,beaker,docker,swebench,tbench]"]
 
-[tool.uv.sources]
-terminal-bench = { path = "/Users/dhei/ai2/tbench/terminal-bench", editable = true }
+# [tool.uv.sources]
+# terminal-bench = { path = "/Users/dhei/ai2/tbench/terminal-bench", editable = true }
 
 [tool.setuptools]
 include-package-data = true
